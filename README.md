@@ -12,6 +12,7 @@ A floating, resizable Windows remote for **Chromecast with Google TV**, **Google
 - In-app ADB pairing, connecting, disconnecting, readable errors, and automatic reconnect.
 - Text entry into the focused TV field with spaces and common shell characters escaped.
 - YouTube, Netflix, and Spotify launch buttons plus editable custom Android package buttons.
+- APK sideloading with a native file picker, safe per-device targeting, update-in-place support, and readable install errors.
 - Optional system tray behavior and Launch with Windows.
 - Standalone one-file Windows build; Python is not required to run the generated EXE.
 
@@ -83,6 +84,17 @@ The default package identifiers were checked against the Google Play listings fo
 
 TV manufacturers and regional variants can ship different identifiers. Open **Settings → Apps** to add or remove buttons without changing code. The launcher uses Android's package launcher rather than relying on an internal activity name.
 
+## Sideload an APK
+
+1. Connect the remote to the TV.
+2. In full mode, find **Sideload APK** and choose **Browse**.
+3. Select one local `.apk` file and click **Install**.
+4. Keep the TV awake while the status message shows that installation is in progress.
+
+The app runs `adb -s TV_IP:PORT install -r selected.apk` in the background. The `-r` option updates an already installed app while preserving its data when Android considers the APK compatible. APK paths containing spaces are passed safely without invoking a command shell.
+
+Only install APKs from sources you trust. The remote does not bypass Android signature checks, device policies, architecture requirements, minimum Android versions, or user-confirmation prompts. Split APK bundles such as `.apks`, `.xapk`, and `.apkm` are not single APK files and are not supported by this button.
+
 ## Run from source
 
 Windows PowerShell:
@@ -137,6 +149,10 @@ The app stores the selected ADB path, TV address/port, window geometry, preferen
 - **Power does not wake a sleeping TV:** Network ADB may stop while the TV is deeply asleep. Wake it with the physical remote, HDMI-CEC, or another supported method, then reconnect.
 - **Text characters differ:** Android's `input text` is best for ordinary Latin text. TV keyboard/IME implementations may handle punctuation or non-Latin characters differently.
 - **App does not launch:** Confirm the app is installed and edit its package name in Settings. Package variants can differ by device, vendor, or region.
+- **APK installation is blocked:** Keep the TV awake and check for an approval prompt. Device policy or app verification can refuse sideloading even while ADB remote commands work.
+- **Version downgrade:** Install a newer APK, or uninstall the newer TV app first. Uninstalling can erase its local data.
+- **Incompatible update/signature:** The installed copy and selected APK were signed differently. Use an APK from the same publisher/signing source or uninstall the existing app first.
+- **Invalid APK:** Confirm it is a single `.apk` built for the TV's Android version and CPU architecture. Split-package bundles are not supported.
 - **Multiple ADB devices:** Every remote command includes the configured TV serial (`IP:port`), so another USB or network device should not receive the key.
 
 ## Tests

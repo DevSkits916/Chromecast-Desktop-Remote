@@ -436,6 +436,30 @@ class RemoteWindow(QMainWindow):
         root.addWidget(self.apps_card)
         self.refresh_apps()
 
+        install_layout = QVBoxLayout()
+        install_layout.setContentsMargins(14, 12, 14, 12)
+        install_title = QLabel("Sideload APK")
+        install_title.setObjectName("muted")
+        install_layout.addWidget(install_title)
+        install_note = QLabel("Install or update an Android TV app. Only use APKs from sources you trust.")
+        install_note.setWordWrap(True)
+        install_note.setObjectName("muted")
+        install_layout.addWidget(install_note)
+        install_row = QHBoxLayout()
+        self.apk_path_edit = QLineEdit()
+        self.apk_path_edit.setReadOnly(True)
+        self.apk_path_edit.setPlaceholderText("Select an .apk file…")
+        browse_apk = button("Browse…")
+        browse_apk.clicked.connect(self.select_apk)
+        self.install_apk_button = button("Install", name="primary")
+        self.install_apk_button.clicked.connect(self.install_apk)
+        install_row.addWidget(self.apk_path_edit, 1)
+        install_row.addWidget(browse_apk)
+        install_row.addWidget(self.install_apk_button)
+        install_layout.addLayout(install_row)
+        self.install_card = card(install_layout)
+        root.addWidget(self.install_card)
+
         self.message = QLabel("Ready")
         self.message.setWordWrap(True)
         self.message.setObjectName("muted")
@@ -529,8 +553,26 @@ class RemoteWindow(QMainWindow):
         if self.controller.send_text(text):
             self.message.setText("Sending text…")
 
+    def select_apk(self) -> None:
+        chosen, _ = QFileDialog.getOpenFileName(self, "Choose Android APK", "", "Android app package (*.apk)")
+        if chosen:
+            self.apk_path_edit.setText(chosen)
+            self.message.setText(f"Ready to install {Path(chosen).name}.")
+
+    def install_apk(self) -> None:
+        if not self.connected:
+            self.message.setText("Connect to the TV before installing an APK.")
+            return
+        path = self.apk_path_edit.text().strip()
+        if not path:
+            self.message.setText("Choose an APK file first.")
+            return
+        if self.controller.install_apk(path):
+            self.message.setText(f"Installing {Path(path).name}… This can take a few minutes.")
+
     def _busy(self, busy: bool) -> None:
         self.connect_button.setText("Working…" if busy else "Connect")
+        self.install_apk_button.setEnabled(not busy)
 
     def _handle_result(self, result: AdbResult) -> None:
         if result.action == "connect":
@@ -544,6 +586,8 @@ class RemoteWindow(QMainWindow):
                 self.message.setText(result.action.removeprefix("key:").replace("_", " ").title())
             elif result.action.startswith("launch:"):
                 self.message.setText(f"Launched {result.action.split(':', 1)[1]}")
+            elif result.action.startswith("install:"):
+                self.message.setText(f"Installed {result.action.split(':', 1)[1]} successfully.")
             else:
                 self.message.setText(result.output or f"{result.action.title()} complete.")
         else:
@@ -564,7 +608,7 @@ class RemoteWindow(QMainWindow):
 
     def set_compact(self, compact: bool) -> None:
         self.compact = compact
-        for widget in (self.connection_card, self.media_card, self.text_card, self.apps_card):
+        for widget in (self.connection_card, self.media_card, self.text_card, self.apps_card, self.install_card):
             widget.setVisible(not compact)
         if compact:
             self.resize(max(330, min(self.width(), 390)), 560)

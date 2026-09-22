@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 
-from chromecast_remote.adb import KEYCODES, device_serial, escape_android_text, friendly_error, run_adb
+from chromecast_remote.adb import AdbController, KEYCODES, device_serial, escape_android_text, friendly_error, run_adb
 
 
 def test_device_serial():
@@ -17,6 +17,8 @@ def test_friendly_errors():
     assert "authorized" in friendly_error("error: device unauthorized")
     assert "offline" in friendly_error("device offline")
     assert "Could not reach" in friendly_error("failed to connect")
+    assert "newer version" in friendly_error("Failure [INSTALL_FAILED_VERSION_DOWNGRADE]")
+    assert "enough free storage" in friendly_error("Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]")
 
 
 def test_missing_adb_is_safe(tmp_path: Path):
@@ -41,3 +43,30 @@ def test_required_android_keycodes():
         "volume_down": 25, "mute": 164, "play_pause": 85,
         "rewind": 89, "fast_forward": 90,
     }
+
+
+def test_install_apk_targets_saved_tv_and_uses_replace(tmp_path, monkeypatch):
+    apk = tmp_path / "Example TV App.apk"
+    apk.write_bytes(b"mock apk")
+    controller = AdbController()
+    controller.serial = "192.168.1.20:37123"
+    captured = {}
+
+    def fake_execute(args, action, timeout=12.0):
+        captured.update(args=args, action=action, timeout=timeout)
+        return True
+
+    monkeypatch.setattr(controller, "execute", fake_execute)
+    assert controller.install_apk(str(apk))
+    assert captured["args"] == ["-s", controller.serial, "install", "-r", str(apk.resolve())]
+    assert captured["action"] == "install:Example TV App.apk"
+    assert captured["timeout"] == 180
+
+
+def test_install_apk_rejects_missing_or_non_apk(tmp_path):
+    controller = AdbController()
+    results = []
+    controller.result.connect(results.append)
+    assert not controller.install_apk(str(tmp_path / "missing.apk"))
+    assert not controller.install_apk(str(tmp_path / "notes.txt"))
+    assert all("valid local .apk" in result.output for result in results)

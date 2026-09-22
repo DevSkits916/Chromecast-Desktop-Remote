@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
@@ -56,6 +57,16 @@ def friendly_error(output: str, timed_out: bool = False) -> str:
         return "Multiple ADB devices were found. This remote will target the saved TV address."
     if "no devices" in low or "device not found" in low:
         return "The TV is disconnected. Connect or pair it first."
+    if "install_failed_version_downgrade" in low:
+        return "A newer version of this app is already installed on the TV. Use a newer APK or uninstall the existing app first."
+    if "install_failed_update_incompatible" in low:
+        return "The installed app has a different signature. Uninstalling it first may fix this, but that can erase the app's data."
+    if "install_failed_insufficient_storage" in low:
+        return "The TV does not have enough free storage for this APK."
+    if "install_failed_user_restricted" in low:
+        return "The TV blocked the installation. Check its developer and app-verification settings, then accept any TV prompt."
+    if "install_failed_invalid_apk" in low or "failed to parse" in low:
+        return "The selected file is not a valid APK or is incompatible with this TV."
     return output.strip() or "ADB command failed without an explanation."
 
 
@@ -72,7 +83,7 @@ def run_adb(adb_path: str, args: list[str], action: str, timeout: float = 12.0) 
         output = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part.strip())
         ok = completed.returncode == 0 and not any(
             phrase in output.lower()
-            for phrase in ("failed to", "cannot connect", "error:", "unauthorized", "offline")
+            for phrase in ("failed to", "cannot connect", "error:", "unauthorized", "offline", "failure [")
         )
         return AdbResult(action, ok, output if ok else friendly_error(output), completed.returncode)
     except subprocess.TimeoutExpired:
@@ -113,8 +124,6 @@ class AdbController(QObject):
 
     @property
     def available(self) -> bool:
-        from pathlib import Path
-
         return bool(self.adb_path and Path(self.adb_path).is_file())
 
     def set_adb_path(self, path: str | None) -> None:
@@ -163,4 +172,15 @@ class AdbController(QObject):
         return self.execute(
             self.target_args(["shell", "monkey", "-p", package.strip(), "-c", "android.intent.category.LAUNCHER", "1"]),
             f"launch:{package.strip()}",
+        )
+
+    def install_apk(self, path: str) -> bool:
+        apk = Path(path).expanduser()
+        if apk.suffix.lower() != ".apk" or not apk.is_file():
+            self.result.emit(AdbResult("install", False, "Choose a valid local .apk file first."))
+            return False
+        return self.execute(
+            self.target_args(["install", "-r", str(apk.resolve())]),
+            f"install:{apk.name}",
+            180,
         )

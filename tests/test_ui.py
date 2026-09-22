@@ -21,8 +21,32 @@ def test_window_builds_and_modes(monkeypatch):
     window.set_compact(True)
     assert window.compact
     assert not window.connection_card.isVisible()
+    assert not window.install_card.isVisible()
     window.set_compact(False)
     assert not window.compact
+    window.quitting = True
+    window.close()
+    app.processEvents()
+
+
+def test_sideload_requires_connection_and_calls_controller(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    settings = dict(DEFAULTS)
+    settings["window"] = dict(DEFAULTS["window"])
+    settings["auto_connect"] = False
+    settings["close_to_tray"] = False
+    window = RemoteWindow(settings)
+    apk = tmp_path / "tv-app.apk"
+    apk.write_bytes(b"mock apk")
+    window.apk_path_edit.setText(str(apk))
+    window.install_apk()
+    assert "Connect" in window.message.text()
+    installed = []
+    monkeypatch.setattr(window.controller, "install_apk", lambda path: installed.append(path) or True)
+    window.connected = True
+    window.install_apk()
+    assert installed == [str(apk)]
+    assert "Installing tv-app.apk" in window.message.text()
     window.quitting = True
     window.close()
     app.processEvents()
