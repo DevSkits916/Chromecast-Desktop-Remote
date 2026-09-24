@@ -7,11 +7,6 @@ from copy import deepcopy
 from pathlib import Path
 
 APP_NAME = "ChromecastDesktopRemote"
-DEFAULT_APPS = [
-    {"name": "YouTube", "package": "com.google.android.youtube.tv"},
-    {"name": "Netflix", "package": "com.netflix.ninja"},
-    {"name": "Spotify", "package": "com.spotify.tv.android"},
-]
 DEFAULTS = {
     "device_ip": "",
     "adb_port": 5555,
@@ -24,7 +19,6 @@ DEFAULTS = {
     "close_to_tray": True,
     "launch_windows": False,
     "window": {"x": None, "y": None, "width": 420, "height": 780},
-    "apps": DEFAULT_APPS,
 }
 
 

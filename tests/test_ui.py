@@ -71,7 +71,7 @@ def test_discovery_updates_port_and_connects(monkeypatch):
     app.processEvents()
 
 
-def test_keyboard_shortcuts_and_text_field(monkeypatch):
+def test_keyboard_shortcuts(monkeypatch):
     app = QApplication.instance() or QApplication([])
     settings = dict(DEFAULTS)
     settings["window"] = dict(DEFAULTS["window"])
@@ -86,10 +86,7 @@ def test_keyboard_shortcuts_and_text_field(monkeypatch):
     app.processEvents()
     QTest.keyClick(window, Qt.Key.Key_Up)
     QTest.keyClick(window, Qt.Key.Key_Space)
-    assert sent == ["up", "play_pause"]
-    window.text_edit.setFocus()
-    QTest.keyClicks(window.text_edit, "Hello TV")
-    assert window.text_edit.text() == "Hello TV"
+    assert sent == ["up"]
     window.quitting = True
     window.close()
     app.processEvents()

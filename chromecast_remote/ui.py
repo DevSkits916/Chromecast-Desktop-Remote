@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListWidget,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -26,7 +25,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QSystemTrayIcon,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -225,10 +223,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.resize(570, 610)
         root = QVBoxLayout(self)
-        tabs = QTabWidget()
-        tabs.addTab(self._general_tab(), "General")
-        tabs.addTab(self._apps_tab(), "Apps")
-        root.addWidget(tabs)
+        root.addWidget(self._general_tab())
         actions = QHBoxLayout()
         reset = button("Reset configuration")
         reset.clicked.connect(self._reset)
@@ -286,55 +281,10 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         return page
 
-    def _apps_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        note = QLabel("Package names vary by TV and app version. These defaults are editable and launching uses Android's package launcher.")
-        note.setWordWrap(True)
-        note.setObjectName("muted")
-        layout.addWidget(note)
-        self.app_list = QListWidget()
-        for app in self.settings.get("apps", []):
-            self.app_list.addItem(f'{app.get("name", "App")}  —  {app.get("package", "")}')
-        layout.addWidget(self.app_list)
-        form = QFormLayout()
-        self.app_name = QLineEdit()
-        self.app_name.setPlaceholderText("Plex")
-        self.app_package = QLineEdit()
-        self.app_package.setPlaceholderText("com.example.tv")
-        form.addRow("Button name", self.app_name)
-        form.addRow("Android package", self.app_package)
-        layout.addLayout(form)
-        actions = QHBoxLayout()
-        add = button("Add app")
-        add.clicked.connect(self._add_app)
-        remove = button("Remove selected")
-        remove.clicked.connect(lambda: self.app_list.takeItem(self.app_list.currentRow()))
-        actions.addWidget(add)
-        actions.addWidget(remove)
-        actions.addStretch()
-        layout.addLayout(actions)
-        return page
-
     def _browse_adb(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(self, "Choose adb.exe", self.adb.text(), "ADB executable (adb.exe);;All files (*)")
         if chosen:
             self.adb.setText(chosen)
-
-    def _add_app(self) -> None:
-        name, package = self.app_name.text().strip(), self.app_package.text().strip()
-        if name and package:
-            self.app_list.addItem(f"{name}  —  {package}")
-            self.app_name.clear()
-            self.app_package.clear()
-
-    def _collect_apps(self) -> list[dict]:
-        apps = []
-        for index in range(self.app_list.count()):
-            parts = self.app_list.item(index).text().split("  —  ", 1)
-            if len(parts) == 2:
-                apps.append({"name": parts[0].strip(), "package": parts[1].strip()})
-        return apps
 
     def _save(self) -> None:
         old_startup = bool(self.remote.settings.get("launch_windows"))
@@ -349,7 +299,6 @@ class SettingsDialog(QDialog):
                 "compact_default": self.compact.isChecked(),
                 "launch_windows": self.startup.isChecked(),
                 "close_to_tray": self.tray.isChecked(),
-                "apps": self._collect_apps(),
             }
         )
         if old_startup != self.startup.isChecked():
@@ -361,7 +310,7 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def _reset(self) -> None:
-        answer = QMessageBox.question(self, "Reset configuration", "Reset all settings and app buttons to their defaults?")
+        answer = QMessageBox.question(self, "Reset configuration", "Reset all settings to their defaults?")
         if answer == QMessageBox.StandardButton.Yes:
             if self.remote.settings.get("launch_windows"):
                 set_launch_with_windows(False)
@@ -417,14 +366,10 @@ class RemoteWindow(QMainWindow):
         status_col.addWidget(self.status_label)
         status_col.addWidget(self.device_label)
         header.addLayout(status_col, 1)
-        self.top_button = button("Pin", "Always on top")
-        self.top_button.setCheckable(True)
-        self.top_button.toggled.connect(self.set_always_on_top)
         mode = button("Compact", "Toggle compact remote")
         mode.clicked.connect(lambda: self.set_compact(not self.compact))
         settings_button = button("⚙", "Settings", "round")
         settings_button.clicked.connect(self.open_settings)
-        header.addWidget(self.top_button)
         header.addWidget(mode)
         header.addWidget(settings_button)
         root.addLayout(header)
@@ -499,54 +444,12 @@ class RemoteWindow(QMainWindow):
         back_home.addWidget(home)
         root.addLayout(back_home)
 
-        media_layout = QVBoxLayout()
-        media_layout.setContentsMargins(14, 12, 14, 12)
-        media_title = QLabel("Media")
-        media_title.setObjectName("muted")
-        media_layout.addWidget(media_title)
-        media_row = QHBoxLayout()
-        for text, name in [("⏪", "rewind"), ("⏯", "play_pause"), ("⏩", "fast_forward")]:
-            item = button(text, name.replace("_", " ").title(), "round")
-            item.clicked.connect(lambda checked=False, key=name: self.send_key(key))
-            media_row.addWidget(item)
-        media_layout.addLayout(media_row)
-        self.media_card = card(media_layout)
-        root.addWidget(self.media_card)
-
         volume = QHBoxLayout()
         for text, name in [("−", "volume_down"), ("Mute", "mute"), ("+", "volume_up")]:
             item = button(text, name.replace("_", " ").title())
             item.clicked.connect(lambda checked=False, key=name: self.send_key(key))
             volume.addWidget(item)
         root.addLayout(volume)
-
-        text_layout = QVBoxLayout()
-        text_layout.setContentsMargins(14, 12, 14, 12)
-        text_label = QLabel("Send text to the focused TV field")
-        text_label.setObjectName("muted")
-        text_layout.addWidget(text_label)
-        text_row = QHBoxLayout()
-        self.text_edit = QLineEdit()
-        self.text_edit.setPlaceholderText("Type text…")
-        self.text_edit.returnPressed.connect(self.send_text)
-        send = button("Send", name="primary")
-        send.clicked.connect(self.send_text)
-        text_row.addWidget(self.text_edit, 1)
-        text_row.addWidget(send)
-        text_layout.addLayout(text_row)
-        self.text_card = card(text_layout)
-        root.addWidget(self.text_card)
-
-        apps_layout = QVBoxLayout()
-        apps_layout.setContentsMargins(14, 12, 14, 12)
-        apps_title = QLabel("Apps")
-        apps_title.setObjectName("muted")
-        apps_layout.addWidget(apps_title)
-        self.apps_row = QHBoxLayout()
-        apps_layout.addLayout(self.apps_row)
-        self.apps_card = card(apps_layout)
-        root.addWidget(self.apps_card)
-        self.refresh_apps()
 
         install_layout = QVBoxLayout()
         install_layout.setContentsMargins(14, 12, 14, 12)
@@ -622,24 +525,6 @@ class RemoteWindow(QMainWindow):
         else:
             self.adb_notice.setText("ADB is not ready. Choose Set up ADB for automatic installation from Google.")
 
-    def refresh_apps(self) -> None:
-        while self.apps_row.count():
-            item = self.apps_row.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        apps = self.settings.get("apps", [])
-        if not apps:
-            label = QLabel("Add app buttons in Settings.")
-            label.setObjectName("muted")
-            self.apps_row.addWidget(label)
-            return
-        for app in apps:
-            item = button(str(app.get("name", "App")))
-            package = str(app.get("package", ""))
-            item.setToolTip(package)
-            item.clicked.connect(lambda checked=False, pkg=package: self.controller.launch_package(pkg))
-            self.apps_row.addWidget(item)
-
     def connect_device(self) -> None:
         ip = self.ip_edit.text().strip()
         if not ip:
@@ -712,13 +597,6 @@ class RemoteWindow(QMainWindow):
     def send_key(self, name: str) -> None:
         self.controller.key(name)
 
-    def send_text(self) -> None:
-        text = self.text_edit.text()
-        if not text:
-            return
-        if self.controller.send_text(text):
-            self.message.setText("Sending text…")
-
     def select_apk(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(self, "Choose Android APK", "", "Android app package (*.apk)")
         if chosen:
@@ -751,8 +629,6 @@ class RemoteWindow(QMainWindow):
         elif result.action == "disconnect" and result.ok:
             self.connected = False
         if result.ok:
-            if result.action == "text":
-                self.text_edit.clear()
             if result.action.startswith("key:"):
                 self.message.setText(result.action.removeprefix("key:").replace("_", " ").title())
             elif result.action.startswith("launch:"):
@@ -769,17 +645,13 @@ class RemoteWindow(QMainWindow):
         self.status_label.style().polish(self.status_label)
 
     def set_always_on_top(self, enabled: bool) -> None:
-        self.top_button.blockSignals(True)
-        self.top_button.setChecked(enabled)
-        self.top_button.setText("Pinned" if enabled else "Pin")
-        self.top_button.blockSignals(False)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
         if self.isVisible():
             self.show()
 
     def set_compact(self, compact: bool) -> None:
         self.compact = compact
-        for widget in (self.connection_card, self.media_card, self.text_card, self.apps_card, self.install_card):
+        for widget in (self.connection_card, self.install_card):
             widget.setVisible(not compact)
         if compact:
             self.resize(max(330, min(self.width(), 390)), 560)
@@ -809,7 +681,6 @@ class RemoteWindow(QMainWindow):
             self.settings["adb_path"] = found
         self.set_always_on_top(bool(settings.get("always_on_top")))
         self.set_compact(bool(settings.get("compact_default")))
-        self.refresh_apps()
         self._update_adb_notice()
         save_settings(self.settings)
 
@@ -822,7 +693,7 @@ class RemoteWindow(QMainWindow):
             mapping = {
                 Qt.Key.Key_Up: "up", Qt.Key.Key_Down: "down", Qt.Key.Key_Left: "left", Qt.Key.Key_Right: "right",
                 Qt.Key.Key_Return: "ok", Qt.Key.Key_Enter: "ok", Qt.Key.Key_Escape: "back", Qt.Key.Key_Backspace: "back",
-                Qt.Key.Key_H: "home", Qt.Key.Key_Space: "play_pause", Qt.Key.Key_PageUp: "volume_up", Qt.Key.Key_PageDown: "volume_down",
+                Qt.Key.Key_H: "home", Qt.Key.Key_PageUp: "volume_up", Qt.Key.Key_PageDown: "volume_down",
             }
             if key in mapping and not event.isAutoRepeat():
                 self.send_key(mapping[key])

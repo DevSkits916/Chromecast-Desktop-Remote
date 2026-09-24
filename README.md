@@ -7,12 +7,10 @@ A floating, resizable Windows remote for **Chromecast with Google TV**, **Google
 
 ## Features
 
-- Modern dark PySide6 interface with scalable controls, hover/press feedback, compact mode, Always on Top, remembered size and position, and a minimum safe size.
-- D-pad, OK, Back, Home, Power, volume, mute, play/pause, rewind, and fast-forward.
+- Modern dark PySide6 interface with scalable controls, hover/press feedback, compact mode, an optional Always on Top setting, remembered size and position, and a minimum safe size.
+- D-pad, OK, Back, Home, Power, volume, and mute.
 - Keyboard controls while the remote window is focused.
 - In-app managed ADB setup, pairing, mDNS port detection, connecting, readable errors, and automatic reconnect.
-- Text entry into the focused TV field with spaces and common shell characters escaped.
-- YouTube, Netflix, and Spotify launch buttons plus editable custom Android package buttons.
 - APK sideloading with a native file picker, safe per-device targeting, update-in-place support, and readable install errors.
 - Optional system tray behavior and Launch with Windows.
 - Standalone one-file Windows build; Python is not required to run the generated EXE.
@@ -60,11 +58,10 @@ Manual IP and port fields remain available as a fallback for networks that block
 | Enter | OK / Select |
 | Escape or Backspace | Back |
 | H | Home |
-| Space | Play / Pause |
 | Page Up | Volume Up |
 | Page Down | Volume Down |
 
-Shortcuts are paused while typing in an IP, port, pairing-code, or text-entry field so normal editing remains possible.
+Shortcuts are paused while typing in an IP, port, or pairing-code field so normal editing remains possible.
 
 ## Android key events
 
@@ -74,17 +71,6 @@ Shortcuts are paused while typing in an IP, port, pairing-code, or text-entry fi
 | OK | 23 (`DPAD_CENTER`) |
 | Back / Home / Power | 4 / 3 / 26 |
 | Volume Up / Down / Mute | 24 / 25 / 164 |
-| Play-Pause / Rewind / Fast Forward | 85 / 89 / 90 |
-
-## App buttons
-
-The default package identifiers were checked against the Google Play listings for the TV apps:
-
-- YouTube for Android TV: `com.google.android.youtube.tv`
-- Netflix: `com.netflix.ninja`
-- Spotify for TV: `com.spotify.tv.android`
-
-TV manufacturers and regional variants can ship different identifiers. Open **Settings → Apps** to add or remove buttons without changing code. The launcher uses Android's package launcher rather than relying on an internal activity name.
 
 ## Sideload an APK
 
@@ -139,7 +125,7 @@ Settings are stored per user at:
 %LOCALAPPDATA%\ChromecastDesktopRemote\settings.json
 ```
 
-The app stores the managed ADB path, terms-acceptance preference, TV address/port, window geometry, preferences, and custom app buttons. It stores no TV pairing code, password, cookie, account, or media history. Internet access is used only when you explicitly download Platform Tools from Google; TV control remains local.
+The app stores the managed ADB path, terms-acceptance preference, TV address/port, window geometry, and preferences. It stores no TV pairing code, password, cookie, account, or usage history. Internet access is used only when you explicitly download Platform Tools from Google; TV control remains local.
 
 ## Troubleshooting
 
