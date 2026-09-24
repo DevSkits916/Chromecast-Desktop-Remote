@@ -16,7 +16,9 @@ DEFAULTS = {
     "device_ip": "",
     "adb_port": 5555,
     "adb_path": "",
+    "adb_terms_accepted": False,
     "auto_connect": True,
+    "auto_detect_port": True,
     "always_on_top": False,
     "compact_default": False,
     "close_to_tray": True,
@@ -33,6 +35,10 @@ def config_dir() -> Path:
 
 def config_path() -> Path:
     return config_dir() / "settings.json"
+
+
+def managed_adb_path() -> Path:
+    return config_dir() / "platform-tools" / "adb.exe"
 
 
 def load_settings(path: Path | None = None) -> dict:
@@ -64,6 +70,7 @@ def find_adb(configured: str = "") -> str | None:
     candidates: list[Path] = []
     if configured:
         candidates.append(Path(configured).expanduser())
+    candidates.append(managed_adb_path())
     on_path = shutil.which("adb")
     if on_path:
         candidates.append(Path(on_path))

@@ -10,7 +10,7 @@ A floating, resizable Windows remote for **Chromecast with Google TV**, **Google
 - Modern dark PySide6 interface with scalable controls, hover/press feedback, compact mode, Always on Top, remembered size and position, and a minimum safe size.
 - D-pad, OK, Back, Home, Power, volume, mute, play/pause, rewind, and fast-forward.
 - Keyboard controls while the remote window is focused.
-- In-app ADB pairing, connecting, disconnecting, readable errors, and automatic reconnect.
+- In-app managed ADB setup, pairing, mDNS port detection, connecting, readable errors, and automatic reconnect.
 - Text entry into the focused TV field with spaces and common shell characters escaped.
 - YouTube, Netflix, and Spotify launch buttons plus editable custom Android package buttons.
 - APK sideloading with a native file picker, safe per-device targeting, update-in-place support, and readable install errors.
@@ -19,11 +19,11 @@ A floating, resizable Windows remote for **Chromecast with Google TV**, **Google
 
 ## First run
 
-### 1. Install Android Platform Tools
+### 1. Set up managed ADB
 
-ADB is intentionally not redistributed inside this repository or EXE. Google's Android SDK license restricts redistribution of SDK components. Download the current **SDK Platform-Tools for Windows** from the [official Android page](https://developer.android.com/tools/releases/platform-tools), accept Google's terms, unzip it, and keep the complete `platform-tools` folder together (including its DLLs).
+ADB is not redistributed inside this repository or EXE. On first run, choose **Set up ADB**, read and accept Google's Android SDK terms, then choose **Download and install**. The app downloads the current official Windows Platform Tools directly from `dl.google.com`, validates the archive structure, and installs the required ADB runtime in your local AppData folder.
 
-The remote automatically looks in your PATH, Android Studio's standard SDK folder, and `C:\Android\platform-tools`. Otherwise, open **Settings → Path to adb.exe → Browse** and choose `platform-tools\adb.exe`. A missing ADB installation shows a setup message and never crashes the app.
+No terminal, manual extraction, system-wide installation, or separate ADB download is required. An existing ADB installation can still be selected in Settings as an optional fallback.
 
 ### 2. Enable developer options on the TV
 
@@ -38,18 +38,19 @@ Menu names vary slightly by Google TV version:
 
 1. On the TV's **Wireless debugging** screen, choose **Pair device with pairing code**.
 2. In the desktop remote choose **Pair device**.
-3. Enter the TV IP, the temporary pairing port, and the displayed pairing code.
+3. Choose **Detect pairing port** or enter the TV IP and temporary pairing port manually, then enter the displayed pairing code.
 4. Click **Pair**. Pairing authorization normally persists until it is revoked on the TV.
 
 ### 4. Connect
 
-The Wireless Debugging screen also shows an **IP address & port** for normal connections. That connection port can differ from both the temporary pairing port and the traditional `5555` default.
+The normal connection port can differ from both the temporary pairing port and the traditional `5555` default. The remote discovers the current `_adb-tls-connect._tcp` service over the local network, so port changes do not normally require manual entry.
 
-1. Enter the TV IP and its current connection port in the remote.
-2. Click **Connect**.
-3. Leave **Auto-connect on startup** enabled in Settings if the address is stable.
+1. Turn on **Wireless debugging** on the TV.
+2. Click **Auto-detect port**, or simply click **Connect** with automatic port detection enabled.
+3. If more than one TV is found, choose the intended device.
+4. Leave **Auto-connect on startup** enabled to detect and reconnect on future launches.
 
-If the TV changes the connection port after a restart, copy the new port from its Wireless Debugging screen. Reserving the TV's IP in the router can make reconnection more predictable.
+Manual IP and port fields remain available as a fallback for networks that block mDNS discovery.
 
 ## Keyboard shortcuts
 
@@ -126,7 +127,7 @@ The build script creates a local virtual environment, installs pinned-compatible
 release\ChromecastRemote.exe
 ```
 
-The EXE does not need Python, but ADB remains an external prerequisite for licensing and updateability. Keep `adb.exe` with the other files from Google's Platform Tools download.
+The EXE does not need Python or a preinstalled copy of ADB. The user accepts Google's terms in-app and the remote downloads Platform Tools directly from Google on first run; the Google binaries are not redistributed inside this release.
 
 The packaging step temporarily isolates its DLL search path and excludes Qt's unused networking bindings. This prevents unrelated OpenSSL DLLs installed by other Windows applications from being accidentally bundled with Qt.
 
@@ -138,15 +139,15 @@ Settings are stored per user at:
 %LOCALAPPDATA%\ChromecastDesktopRemote\settings.json
 ```
 
-The app stores the selected ADB path, TV address/port, window geometry, preferences, and custom app buttons. It stores no TV pairing code, password, cookie, account, or media history. Communication is initiated locally by ADB to the address you enter.
+The app stores the managed ADB path, terms-acceptance preference, TV address/port, window geometry, preferences, and custom app buttons. It stores no TV pairing code, password, cookie, account, or media history. Internet access is used only when you explicitly download Platform Tools from Google; TV control remains local.
 
 ## Troubleshooting
 
-- **ADB was not found:** Choose the exact `adb.exe` in Settings. Do not copy only the EXE out of Platform Tools; its neighboring DLLs may be required.
+- **ADB is not ready:** Choose **Set up ADB**, accept Google's terms, and let the remote download the official runtime. Settings can still select an existing `adb.exe` if preferred.
 - **Could not reach the TV:** Confirm both devices are on the same LAN, Wireless debugging is enabled, and use the current connection port shown by the TV—not the temporary pairing port.
 - **Unauthorized:** Pair again and accept any authorization prompt on the TV. If needed, forget the computer under Paired devices and repeat pairing.
 - **Offline:** Wake the TV, reopen Wireless debugging, then Disconnect and Connect.
-- **Port changed:** Update the port shown on the TV. Google TV can rotate its wireless ADB port.
+- **Port was not detected:** Confirm Wireless debugging is on and both devices are on the same non-guest LAN. Some routers block mDNS between wireless clients; enter the port shown by the TV as a fallback.
 - **Power does not wake a sleeping TV:** Network ADB may stop while the TV is deeply asleep. Wake it with the physical remote, HDMI-CEC, or another supported method, then reconnect.
 - **Text characters differ:** Android's `input text` is best for ordinary Latin text. TV keyboard/IME implementations may handle punctuation or non-Latin characters differently.
 - **App does not launch:** Confirm the app is installed and edit its package name in Settings. Package variants can differ by device, vendor, or region.

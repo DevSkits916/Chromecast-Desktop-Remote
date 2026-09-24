@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 
-from chromecast_remote.adb import AdbController, KEYCODES, device_serial, escape_android_text, friendly_error, run_adb
+from chromecast_remote.adb import AdbController, KEYCODES, device_serial, escape_android_text, friendly_error, parse_mdns_services, run_adb
 
 
 def test_device_serial():
@@ -43,6 +43,27 @@ def test_required_android_keycodes():
         "volume_down": 25, "mute": 164, "play_pause": 85,
         "rewind": 89, "fast_forward": 90,
     }
+
+
+def test_parse_mdns_connect_services():
+    output = """List of discovered mdns services
+adb-tv-pair  _adb-tls-pairing._tcp  192.168.1.40:39999
+adb-tv-main  _adb-tls-connect._tcp  192.168.1.40:42123
+bad-row      _adb-tls-connect._tcp  missing-port
+"""
+    devices = parse_mdns_services(output)
+    assert len(devices) == 1
+    assert devices[0].name == "adb-tv-main"
+    assert devices[0].ip == "192.168.1.40"
+    assert devices[0].port == 42123
+
+
+def test_discovery_runs_mdns_services(monkeypatch):
+    controller = AdbController()
+    captured = {}
+    monkeypatch.setattr(controller, "execute", lambda args, action, timeout=12: captured.update(args=args, action=action, timeout=timeout) or True)
+    assert controller.discover_devices("discover_connect")
+    assert captured == {"args": ["mdns", "services"], "action": "discover_connect", "timeout": 15}
 
 
 def test_install_apk_targets_saved_tv_and_uses_replace(tmp_path, monkeypatch):

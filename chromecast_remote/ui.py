@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 import sys
-import webbrowser
 from copy import deepcopy
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QThreadPool, QTimer
 from PySide6.QtGui import QAction, QCloseEvent, QIcon, QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -17,6 +15,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -26,15 +25,15 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
-    QStackedWidget,
     QSystemTrayIcon,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from .adb import AdbController, AdbResult, KEYCODES
+from .adb import AdbController, AdbResult, KEYCODES, parse_mdns_services
 from .config import DEFAULTS, find_adb, save_settings, set_launch_with_windows
+from .platform_tools import PlatformToolsTask, SDK_TERMS_URL
 
 
 def app_icon() -> QIcon:
@@ -57,6 +56,72 @@ def card(layout) -> QFrame:
     frame.setObjectName("card")
     frame.setLayout(layout)
     return frame
+
+
+class AdbSetupDialog(QDialog):
+    def __init__(self, parent: "RemoteWindow"):
+        super().__init__(parent)
+        self.remote = parent
+        self._task = None
+        self.setWindowTitle("Set up Android Platform Tools")
+        self.setMinimumWidth(470)
+        root = QVBoxLayout(self)
+        title = QLabel("Install managed ADB")
+        title.setObjectName("title")
+        root.addWidget(title)
+        explanation = QLabel(
+            "The remote can download Google's official Windows Platform Tools and keep ADB in your local AppData folder. "
+            "No separate installation or terminal is required."
+        )
+        explanation.setWordWrap(True)
+        root.addWidget(explanation)
+        terms = QLabel(f'<a href="{SDK_TERMS_URL}">Read the Android SDK Terms and Conditions</a>')
+        terms.setOpenExternalLinks(True)
+        root.addWidget(terms)
+        self.accept_terms = QCheckBox("I have read and accept the Android SDK Terms and Conditions")
+        self.accept_terms.setChecked(bool(parent.settings.get("adb_terms_accepted")))
+        root.addWidget(self.accept_terms)
+        privacy = QLabel("The download comes directly from dl.google.com. The app sends no analytics or account data.")
+        privacy.setWordWrap(True)
+        privacy.setObjectName("muted")
+        root.addWidget(privacy)
+        self.status = QLabel("Ready to download.")
+        self.status.setWordWrap(True)
+        self.status.setObjectName("muted")
+        root.addWidget(self.status)
+        actions = QHBoxLayout()
+        actions.addStretch()
+        close = button("Close")
+        close.clicked.connect(self.reject)
+        self.install_button = button("Download and install", name="primary")
+        self.install_button.clicked.connect(self._install)
+        actions.addWidget(close)
+        actions.addWidget(self.install_button)
+        root.addLayout(actions)
+
+    def _install(self) -> None:
+        if not self.accept_terms.isChecked():
+            self.status.setText("Accept the Android SDK terms before downloading Platform Tools.")
+            return
+        self.remote.settings["adb_terms_accepted"] = True
+        save_settings(self.remote.settings)
+        self.install_button.setEnabled(False)
+        self.status.setText("Downloading and verifying Android Platform Tools…")
+        self._task = PlatformToolsTask()
+        self._task.signals.finished.connect(self._finished)
+        QThreadPool.globalInstance().start(self._task)
+
+    def _finished(self, ok: bool, message: str, adb_path: str) -> None:
+        self.status.setText(message)
+        self.install_button.setEnabled(not ok)
+        if not ok:
+            return
+        self.remote.settings["adb_path"] = adb_path
+        self.remote.controller.set_adb_path(adb_path)
+        save_settings(self.remote.settings)
+        self.remote._update_adb_notice()
+        self.remote.message.setText("Managed ADB is ready. Turn on Wireless debugging, then use Auto-detect.")
+        QTimer.singleShot(900, self.remote.connect_with_discovery)
 
 
 class PairDialog(QDialog):
@@ -97,9 +162,12 @@ class PairDialog(QDialog):
         actions.addStretch()
         cancel = button("Close")
         cancel.clicked.connect(self.reject)
+        detect = button("Detect pairing port")
+        detect.clicked.connect(self._detect)
         pair = button("Pair", name="primary")
         pair.clicked.connect(self._pair)
         actions.addWidget(cancel)
+        actions.addWidget(detect)
         actions.addWidget(pair)
         root.addLayout(actions)
         self.remote.controller.result.connect(self._result)
@@ -111,12 +179,42 @@ class PairDialog(QDialog):
         self.status.setText("Pairing…")
         self.remote.controller.pair_device(self.ip.text(), self.port.value(), self.code.text())
 
+    def _detect(self) -> None:
+        if not self.remote.controller.available:
+            self.status.setText("Set up managed ADB before detecting the pairing port.")
+            return
+        self.status.setText("Looking for the TV's temporary pairing service…")
+        self.remote.controller.discover_devices("discover_pair")
+
     def _result(self, result: AdbResult) -> None:
+        if result.action == "discover_pair":
+            if not result.ok:
+                self.status.setText(result.output)
+                return
+            devices = parse_mdns_services(result.output, "_adb-tls-pairing._tcp")
+            if not devices:
+                self.status.setText("No pairing service found. Keep 'Pair device with pairing code' open on the TV and try again.")
+                return
+            current_ip = self.ip.text().strip()
+            matches = [device for device in devices if device.ip == current_ip]
+            selected = matches[0] if matches else devices[0]
+            if len(devices) > 1 and not matches:
+                labels = [f"{device.ip}:{device.port}  ({device.name})" for device in devices]
+                chosen, accepted = QInputDialog.getItem(self, "Choose pairing device", "Discovered pairing services", labels, 0, False)
+                if not accepted:
+                    self.status.setText("Pairing-port detection canceled.")
+                    return
+                selected = devices[labels.index(chosen)]
+            self.ip.setText(selected.ip)
+            self.port.setValue(selected.port)
+            self.status.setText(f"Detected pairing port {selected.port}. Enter the code shown on the TV.")
+            return
         if result.action != "pair":
             return
-        self.status.setText(("Paired successfully. Close this screen, enter the connection port, then Connect." if result.ok else result.output))
+        self.status.setText(("Paired successfully. The remote will now detect the connection port." if result.ok else result.output))
         if result.ok:
             self.remote.ip_edit.setText(self.ip.text().strip())
+            QTimer.singleShot(700, self.remote.connect_with_discovery)
 
 
 class SettingsDialog(QDialog):
@@ -164,11 +262,13 @@ class SettingsDialog(QDialog):
         form.addRow("Connection port", self.port)
         form.addRow("Path to adb.exe", adb_row)
         layout.addLayout(form)
-        download = button("Download official Android Platform Tools")
-        download.clicked.connect(lambda: webbrowser.open("https://developer.android.com/tools/releases/platform-tools"))
+        download = button("Install or repair managed ADB")
+        download.clicked.connect(self.remote.open_adb_setup)
         layout.addWidget(download)
         self.auto = QCheckBox("Auto-connect on startup")
         self.auto.setChecked(bool(self.settings["auto_connect"]))
+        self.detect = QCheckBox("Auto-detect the current Wireless Debugging port")
+        self.detect.setChecked(bool(self.settings.get("auto_detect_port", True)))
         self.top = QCheckBox("Always on top by default")
         self.top.setChecked(bool(self.settings["always_on_top"]))
         self.compact = QCheckBox("Start in compact mode")
@@ -177,7 +277,7 @@ class SettingsDialog(QDialog):
         self.startup.setChecked(bool(self.settings["launch_windows"]))
         self.tray = QCheckBox("Closing the window minimizes to the tray")
         self.tray.setChecked(bool(self.settings["close_to_tray"]))
-        for item in (self.auto, self.top, self.compact, self.startup, self.tray):
+        for item in (self.auto, self.detect, self.top, self.compact, self.startup, self.tray):
             layout.addWidget(item)
         note = QLabel("Settings are stored only on this PC in your local AppData folder. No cloud service or telemetry is used.")
         note.setWordWrap(True)
@@ -244,6 +344,7 @@ class SettingsDialog(QDialog):
                 "adb_port": self.port.value(),
                 "adb_path": self.adb.text().strip(),
                 "auto_connect": self.auto.isChecked(),
+                "auto_detect_port": self.detect.isChecked(),
                 "always_on_top": self.top.isChecked(),
                 "compact_default": self.compact.isChecked(),
                 "launch_windows": self.startup.isChecked(),
@@ -278,6 +379,7 @@ class RemoteWindow(QMainWindow):
             self.settings["adb_path"] = self.controller.adb_path
         self.connected = False
         self.quitting = False
+        self._setup_dialog = None
         self.compact = bool(settings.get("compact_default"))
         self.setWindowTitle("Chromecast Desktop Remote")
         self.setWindowIcon(app_icon())
@@ -291,8 +393,10 @@ class RemoteWindow(QMainWindow):
         self.set_always_on_top(bool(settings.get("always_on_top")))
         self.set_compact(self.compact)
         self._update_adb_notice()
-        if settings.get("auto_connect") and settings.get("device_ip") and self.controller.available:
-            QTimer.singleShot(700, self.connect_device)
+        if self.controller.available and settings.get("auto_connect"):
+            QTimer.singleShot(700, self.connect_with_discovery)
+        elif not self.controller.available:
+            QTimer.singleShot(800, self.prompt_adb_setup)
 
     def _build_ui(self) -> None:
         scroll = QScrollArea()
@@ -339,15 +443,23 @@ class RemoteWindow(QMainWindow):
         connection_layout.addLayout(connect_row)
         action_row = QHBoxLayout()
         self.connect_button = button("Connect", name="primary")
-        self.connect_button.clicked.connect(self.connect_device)
+        self.connect_button.clicked.connect(self.connect_with_discovery)
         disconnect = button("Disconnect")
         disconnect.clicked.connect(self.disconnect_device)
-        pair = button("Pair device")
-        pair.clicked.connect(lambda: PairDialog(self).exec())
         action_row.addWidget(self.connect_button)
         action_row.addWidget(disconnect)
-        action_row.addWidget(pair)
         connection_layout.addLayout(action_row)
+        setup_row = QHBoxLayout()
+        detect = button("Auto-detect port")
+        detect.clicked.connect(self.detect_port)
+        pair = button("Pair device")
+        pair.clicked.connect(lambda: PairDialog(self).exec())
+        setup = button("Set up ADB")
+        setup.clicked.connect(self.open_adb_setup)
+        setup_row.addWidget(detect)
+        setup_row.addWidget(pair)
+        setup_row.addWidget(setup)
+        connection_layout.addLayout(setup_row)
         self.adb_notice = QLabel()
         self.adb_notice.setWordWrap(True)
         self.adb_notice.setObjectName("muted")
@@ -478,7 +590,7 @@ class RemoteWindow(QMainWindow):
         hide = QAction("Hide Remote", self)
         hide.triggered.connect(self.hide)
         connect = QAction("Connect", self)
-        connect.triggered.connect(self.connect_device)
+        connect.triggered.connect(self.connect_with_discovery)
         disconnect = QAction("Disconnect", self)
         disconnect.triggered.connect(self.disconnect_device)
         quit_action = QAction("Quit", self)
@@ -505,9 +617,10 @@ class RemoteWindow(QMainWindow):
 
     def _update_adb_notice(self) -> None:
         if self.controller.available:
-            self.adb_notice.setText(f"ADB ready: {Path(self.controller.adb_path).name}")
+            managed = "platform-tools" in Path(self.controller.adb_path).parts
+            self.adb_notice.setText("Managed ADB ready — ports can be detected automatically." if managed else f"ADB ready: {self.controller.adb_path}")
         else:
-            self.adb_notice.setText("ADB is not installed or could not be found. Open Settings to choose adb.exe or download official Platform Tools.")
+            self.adb_notice.setText("ADB is not ready. Choose Set up ADB for automatic installation from Google.")
 
     def refresh_apps(self) -> None:
         while self.apps_row.count():
@@ -538,6 +651,59 @@ class RemoteWindow(QMainWindow):
         self.device_label.setText(f"{ip}:{self.port_edit.value()}")
         self.message.setText("Connecting…")
         self.controller.connect_device(ip, self.port_edit.value())
+
+    def connect_with_discovery(self) -> None:
+        if not self.controller.available:
+            self.message.setText("Set up managed ADB before connecting.")
+            self.open_adb_setup()
+            return
+        if self.settings.get("auto_detect_port", True):
+            self.message.setText("Looking for Google TV devices and their current ports…")
+            self.controller.discover_devices("discover_connect")
+        else:
+            self.connect_device()
+
+    def detect_port(self) -> None:
+        if not self.controller.available:
+            self.message.setText("Set up managed ADB before detecting devices.")
+            self.open_adb_setup()
+            return
+        self.message.setText("Scanning the local network for Wireless Debugging…")
+        self.controller.discover_devices("discover")
+
+    def _handle_discovery(self, result: AdbResult, connect_after: bool) -> None:
+        if not result.ok:
+            self.message.setText(result.output)
+            return
+        devices = parse_mdns_services(result.output)
+        if not devices:
+            if connect_after and self.ip_edit.text().strip():
+                self.message.setText("No advertised port was found; trying the saved address and port…")
+                self.connect_device()
+            else:
+                self.message.setText("No Google TV Wireless Debugging service was found. Confirm it is enabled and both devices use the same network.")
+            return
+        saved_ip = self.ip_edit.text().strip()
+        matches = [device for device in devices if device.ip == saved_ip]
+        selected = matches[0] if matches else devices[0]
+        if len(devices) > 1 and not matches:
+            labels = [f"{device.ip}:{device.port}  ({device.name})" for device in devices]
+            chosen, accepted = QInputDialog.getItem(self, "Choose Google TV", "Discovered devices", labels, 0, False)
+            if not accepted:
+                self.message.setText("Port detection canceled.")
+                return
+            selected = devices[labels.index(chosen)]
+        self.ip_edit.setText(selected.ip)
+        self.port_edit.setValue(selected.port)
+        self.settings["device_ip"] = selected.ip
+        self.settings["adb_port"] = selected.port
+        save_settings(self.settings)
+        self.device_label.setText(f"{selected.ip}:{selected.port}")
+        if connect_after:
+            self.message.setText(f"Detected port {selected.port}; connecting…")
+            self.connect_device()
+        else:
+            self.message.setText(f"Detected {selected.ip}:{selected.port}. Ready to connect.")
 
     def disconnect_device(self) -> None:
         self.message.setText("Disconnecting…")
@@ -575,6 +741,11 @@ class RemoteWindow(QMainWindow):
         self.install_apk_button.setEnabled(not busy)
 
     def _handle_result(self, result: AdbResult) -> None:
+        if result.action in ("discover", "discover_connect"):
+            self._handle_discovery(result, result.action == "discover_connect")
+            return
+        if result.action == "discover_pair":
+            return
         if result.action == "connect":
             self.connected = result.ok
         elif result.action == "disconnect" and result.ok:
@@ -617,6 +788,16 @@ class RemoteWindow(QMainWindow):
 
     def open_settings(self) -> None:
         SettingsDialog(self).exec()
+
+    def open_adb_setup(self) -> None:
+        AdbSetupDialog(self).exec()
+
+    def prompt_adb_setup(self) -> None:
+        if self._setup_dialog and self._setup_dialog.isVisible():
+            self._setup_dialog.raise_()
+            return
+        self._setup_dialog = AdbSetupDialog(self)
+        self._setup_dialog.show()
 
     def apply_settings(self, settings: dict) -> None:
         self.settings = settings

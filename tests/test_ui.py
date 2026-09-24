@@ -7,6 +7,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from chromecast_remote.config import DEFAULTS
+from chromecast_remote.adb import AdbResult
 from chromecast_remote.ui import RemoteWindow
 
 
@@ -47,6 +48,24 @@ def test_sideload_requires_connection_and_calls_controller(tmp_path, monkeypatch
     window.install_apk()
     assert installed == [str(apk)]
     assert "Installing tv-app.apk" in window.message.text()
+    window.quitting = True
+    window.close()
+    app.processEvents()
+
+
+def test_discovery_updates_port_and_connects(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    settings = dict(DEFAULTS)
+    settings["window"] = dict(DEFAULTS["window"])
+    settings["auto_connect"] = False
+    settings["close_to_tray"] = False
+    window = RemoteWindow(settings)
+    connected = []
+    monkeypatch.setattr(window, "connect_device", lambda: connected.append((window.ip_edit.text(), window.port_edit.value())))
+    result = AdbResult("discover_connect", True, "adb-tv _adb-tls-connect._tcp 192.168.1.88:43210")
+    window._handle_result(result)
+    assert connected == [("192.168.1.88", 43210)]
+    assert window.settings["adb_port"] == 43210
     window.quitting = True
     window.close()
     app.processEvents()

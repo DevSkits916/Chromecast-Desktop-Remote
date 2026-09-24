@@ -33,6 +33,33 @@ class AdbResult:
     return_code: int = -1
 
 
+@dataclass(frozen=True, slots=True)
+class DiscoveredDevice:
+    name: str
+    service: str
+    ip: str
+    port: int
+
+
+def parse_mdns_services(output: str, service: str = "_adb-tls-connect._tcp") -> list[DiscoveredDevice]:
+    devices: list[DiscoveredDevice] = []
+    for raw_line in output.splitlines():
+        parts = raw_line.split()
+        if len(parts) < 3 or parts[-2] != service:
+            continue
+        address = parts[-1]
+        if ":" not in address:
+            continue
+        ip, port_text = address.rsplit(":", 1)
+        try:
+            port = int(port_text)
+        except ValueError:
+            continue
+        if ip and 1 <= port <= 65535:
+            devices.append(DiscoveredDevice(parts[0], parts[-2], ip, port))
+    return devices
+
+
 def device_serial(ip: str, port: int | str) -> str:
     return f"{ip.strip()}:{int(port)}"
 
@@ -155,6 +182,9 @@ class AdbController(QObject):
 
     def pair_device(self, ip: str, port: int | str, code: str) -> bool:
         return self.execute(["pair", device_serial(ip, port), code.strip()], "pair", 20)
+
+    def discover_devices(self, action: str = "discover") -> bool:
+        return self.execute(["mdns", "services"], action, 15)
 
     def target_args(self, command: list[str]) -> list[str]:
         return (["-s", self.serial] if self.serial else []) + command
