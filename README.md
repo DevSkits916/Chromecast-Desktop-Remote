@@ -1,4 +1,7 @@
 <img width="403" height="587" alt="Screenshot 2026-09-22 072116" src="https://github.com/user-attachments/assets/cad7d10f-65b9-489b-96f1-e86dfbac94d5" />
+
+https://github.com/DevSkits916/Chromecast-Desktop-Remote/releases/tag/v1.2.1
+
 # Chromecast Desktop Remote
 
 A floating, resizable Windows remote for **Chromecast with Google TV**, **Google TV Streamer**, and compatible **Android TV / Google TV devices**. It sends controls directly over your local network with Android Debug Bridge (ADB). There are no accounts, cloud services, analytics, or internet-facing listeners.
