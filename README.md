@@ -17,6 +17,8 @@ A floating, resizable Windows remote for **Chromecast with Google TV**, **Google
 
 ## First run
 
+A small Help window opens on every launch with ADB installation and pairing instructions. Close it to use the remote, or reopen it with **Help**. When ADB is available, the app automatically discovers Wireless Debugging devices on startup, even if auto-connect is disabled.
+
 ### 1. Set up managed ADB
 
 ADB is not redistributed inside this repository or EXE. On first run, choose **Set up ADB**, read and accept Google's Android SDK terms, then choose **Download and install**. The app downloads the current official Windows Platform Tools directly from `dl.google.com`, validates the archive structure, and installs the required ADB runtime in your local AppData folder.
@@ -44,7 +46,7 @@ Menu names vary slightly by Google TV version:
 The normal connection port can differ from both the temporary pairing port and the traditional `5555` default. The remote discovers the current `_adb-tls-connect._tcp` service over the local network, so port changes do not normally require manual entry.
 
 1. Turn on **Wireless debugging** on the TV.
-2. Click **Auto-detect port**, or simply click **Connect** with automatic port detection enabled.
+2. Click **Auto Detect**, or simply click **Connect** with automatic port detection enabled.
 3. If more than one TV is found, choose the intended device.
 4. Leave **Auto-connect on startup** enabled to detect and reconnect on future launches.
 

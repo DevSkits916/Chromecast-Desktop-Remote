@@ -122,6 +122,49 @@ class AdbSetupDialog(QDialog):
         QTimer.singleShot(900, self.remote.connect_with_discovery)
 
 
+class HelpDialog(QDialog):
+    def __init__(self, parent: "RemoteWindow"):
+        super().__init__(parent)
+        self.setWindowTitle("Help — Chromecast Remote")
+        self.setFixedWidth(470)
+        root = QVBoxLayout(self)
+        title = QLabel("Connect your TV")
+        title.setObjectName("title")
+        root.addWidget(title)
+        instructions = QLabel(
+            "<b>1. Install ADB</b><br>"
+            "Choose <b>Set up ADB</b>, read and accept Google's SDK terms, then click "
+            "<b>Download and install</b>. You can also select an existing adb.exe in Settings.<br><br>"
+            "<b>2. Prepare the TV</b><br>"
+            "Connect your PC and TV to the same local network. On the TV, open "
+            "<b>Settings → System → About</b> and select <b>Android TV OS build</b> seven times. "
+            "Then open <b>Developer options</b> and turn on <b>Wireless debugging</b>. "
+            "Menu names may vary by TV.<br><br>"
+            "<b>3. Pair the device</b><br>"
+            "On the TV, choose <b>Pair device with pairing code</b> and keep that screen open. "
+            "In the remote, choose <b>Pair device</b>, then <b>Detect pairing port</b> "
+            "(or enter the TV IP and pairing port). Enter the code shown on the TV and click <b>Pair</b>.<br><br>"
+            "<b>4. Connect</b><br>"
+            "The remote discovers Wireless Debugging devices automatically when it opens. "
+            "After pairing it detects the connection port and connects. Use <b>Auto Detect</b> "
+            "to scan again, then <b>Connect</b>. The pairing port and connection port are different.<br><br>"
+            "If discovery finds nothing, check Wireless debugging and your network, or enter "
+            "the address and connection port shown on the TV. Older cast-only Chromecast dongles are not supported."
+        )
+        instructions.setWordWrap(True)
+        root.addWidget(instructions)
+        actions = QHBoxLayout()
+        setup = button("Set up ADB")
+        setup.clicked.connect(parent.open_adb_setup)
+        pair = button("Pair device")
+        pair.clicked.connect(lambda: PairDialog(parent).exec())
+        close = button("Close", name="primary")
+        close.clicked.connect(self.close)
+        for item in (setup, pair, close):
+            actions.addWidget(item)
+        root.addLayout(actions)
+
+
 class PairDialog(QDialog):
     def __init__(self, parent: "RemoteWindow"):
         super().__init__(parent)
@@ -329,6 +372,7 @@ class RemoteWindow(QMainWindow):
         self.connected = False
         self.quitting = False
         self._setup_dialog = None
+        self._help_dialog = None
         self.compact = bool(settings.get("compact_default"))
         self.setWindowTitle("Chromecast Desktop Remote")
         self.setWindowIcon(app_icon())
@@ -342,10 +386,16 @@ class RemoteWindow(QMainWindow):
         self.set_always_on_top(bool(settings.get("always_on_top")))
         self.set_compact(self.compact)
         self._update_adb_notice()
-        if self.controller.available and settings.get("auto_connect"):
-            QTimer.singleShot(700, self.connect_with_discovery)
-        elif not self.controller.available:
-            QTimer.singleShot(800, self.prompt_adb_setup)
+        QTimer.singleShot(300, self.open_help)
+        QTimer.singleShot(700, self._startup_discovery)
+
+    def _startup_discovery(self) -> None:
+        if self.quitting or not self.controller.available:
+            return
+        if self.settings.get("auto_connect"):
+            self.connect_with_discovery()
+        else:
+            self.detect_port()
 
     def _build_ui(self) -> None:
         scroll = QScrollArea()
@@ -371,6 +421,9 @@ class RemoteWindow(QMainWindow):
         settings_button = button("⚙", "Settings", "round")
         settings_button.clicked.connect(self.open_settings)
         header.addWidget(mode)
+        help_button = button("Help", "ADB installation and device pairing instructions")
+        help_button.clicked.connect(self.open_help)
+        header.addWidget(help_button)
         header.addWidget(settings_button)
         root.addLayout(header)
 
@@ -395,7 +448,7 @@ class RemoteWindow(QMainWindow):
         action_row.addWidget(disconnect)
         connection_layout.addLayout(action_row)
         setup_row = QHBoxLayout()
-        detect = button("Auto-detect port")
+        detect = button("Auto Detect")
         detect.clicked.connect(self.detect_port)
         pair = button("Pair device")
         pair.clicked.connect(lambda: PairDialog(self).exec())
@@ -660,6 +713,15 @@ class RemoteWindow(QMainWindow):
 
     def open_settings(self) -> None:
         SettingsDialog(self).exec()
+
+    def open_help(self) -> None:
+        if self.quitting:
+            return
+        if self._help_dialog is None:
+            self._help_dialog = HelpDialog(self)
+        self._help_dialog.show()
+        self._help_dialog.raise_()
+        self._help_dialog.activateWindow()
 
     def open_adb_setup(self) -> None:
         AdbSetupDialog(self).exec()

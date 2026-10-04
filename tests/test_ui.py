@@ -90,3 +90,30 @@ def test_keyboard_shortcuts(monkeypatch):
     window.quitting = True
     window.close()
     app.processEvents()
+
+def test_startup_discovery_and_help(monkeypatch):
+    from PySide6.QtWidgets import QPushButton
+    from chromecast_remote.adb import AdbController
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr('chromecast_remote.ui.save_settings', lambda settings: None)
+    monkeypatch.setattr(AdbController, 'available', property(lambda self: True))
+    settings = dict(DEFAULTS, auto_connect=False, close_to_tray=False)
+    window = RemoteWindow(settings)
+    scanned = []
+    monkeypatch.setattr(window.controller, 'discover_devices', scanned.append)
+    window._startup_discovery()
+    assert scanned == ['discover']
+    window.settings['auto_connect'] = True
+    window._startup_discovery()
+    assert scanned == ['discover', 'discover_connect']
+    assert 'Auto Detect' in [b.text() for b in window.findChildren(QPushButton)]
+    window.open_help()
+    assert window._help_dialog.isVisible()
+    first = window._help_dialog
+    window.open_help()
+    assert window._help_dialog is first
+    window._help_dialog.close()
+    window.quitting = True
+    window.close()
+    app.processEvents()
