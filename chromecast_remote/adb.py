@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import ipaddress
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,9 @@ KEYCODES = {
     "volume_down": 25,
     "mute": 164,
     "play_pause": 85,
+    "previous": 88,
+    "next": 87,
+    "stop": 86,
     "rewind": 89,
     "fast_forward": 90,
 }
@@ -31,6 +35,7 @@ class AdbResult:
     ok: bool
     output: str
     return_code: int = -1
+    generation: int = -1
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,17 +60,30 @@ def parse_mdns_services(output: str, service: str = "_adb-tls-connect._tcp") -> 
             port = int(port_text)
         except ValueError:
             continue
+        try:
+            ipaddress.ip_address(ip.strip("[]"))
+        except ValueError:
+            continue
         if ip and 1 <= port <= 65535:
-            devices.append(DiscoveredDevice(parts[0], parts[-2], ip, port))
+            device = DiscoveredDevice(parts[0], parts[-2], ip, port)
+            if not any(d.ip == ip and d.port == port for d in devices):
+                devices.append(device)
     return devices
 
 
 def device_serial(ip: str, port: int | str) -> str:
-    return f"{ip.strip()}:{int(port)}"
+    address = ipaddress.ip_address(ip.strip().strip("[]"))
+    if not 1 <= int(port) <= 65535:
+        raise ValueError("Connection port must be between 1 and 65535.")
+    host = f"[{address}]" if address.version == 6 else str(address)
+    return f"{host}:{int(port)}"
 
 
 def escape_android_text(text: str) -> str:
     """Escape text for Android's `input text` command (ADB shell syntax)."""
+    text = text.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    if "\x00" in text:
+        raise ValueError("Text cannot contain NUL characters.")
     escaped = re.sub(r"([&|;<>*()'\"`$\\])", r"\\\1", text)
     return escaped.replace("%", "\\%").replace(" ", "%s")
 
@@ -135,7 +153,18 @@ class AdbTask(QRunnable):
         self.signals = WorkerSignals()
 
     def run(self) -> None:
-        self.signals.finished.emit(run_adb(self.adb_path, self.args, self.action, self.timeout))
+        if not getattr(self, "is_current", lambda: True)():
+            result = AdbResult(self.action, False, "Canceled after switching devices.")
+        else:
+            try:
+                if self.action.startswith("install:"):
+                    validate_apk(Path(self.args[-1]))
+                result = run_adb(self.adb_path, self.args, self.action, self.timeout)
+            except (ValueError, OSError) as exc:
+                result = AdbResult(self.action, False, str(exc))
+        result.generation = getattr(self, "generation", -1)
+        self.args = []  # Do not retain pairing codes after execution.
+        self.signals.finished.emit(result)
 
 
 class AdbController(QObject):
@@ -147,7 +176,13 @@ class AdbController(QObject):
         self.adb_path = adb_path or ""
         self.serial = ""
         self.pool = QThreadPool.globalInstance()
+        self._command_id = 0
         self._running = 0
+        self.generation = 0
+        self._pending = set()
+        self._tasks = {}
+        self.command_pool = QThreadPool(self)
+        self.command_pool.setMaxThreadCount(1)
 
     @property
     def available(self) -> bool:
@@ -160,24 +195,45 @@ class AdbController(QObject):
         if not self.available:
             self.result.emit(AdbResult(action, False, "ADB was not found. Open Settings and choose adb.exe."))
             return False
+        if args == ["mdns", "services"] and any(generation == self.generation and pending.startswith("discover") for generation, pending in self._pending):
+            return False
+        token = (self.generation, action)
+        if token in self._pending or (action.startswith("key:") and self._running >= 4):
+            return False
         task = AdbTask(self.adb_path, args, action, timeout)
+        task.generation = self.generation
+        task.is_current = lambda generation=self.generation: generation == self.generation
+        self._tasks[token] = task
+        self._pending.add(token)
         self._running += 1
         self.busy_changed.emit(True)
         task.signals.finished.connect(self._on_finished)
-        self.pool.start(task)
+        (self.command_pool if action.startswith("key:") or action == "text" else self.pool).start(task)
         return True
 
     def _on_finished(self, result: AdbResult) -> None:
         self._running = max(0, self._running - 1)
         self.busy_changed.emit(self._running > 0)
-        self.result.emit(result)
+        self._pending.discard((result.generation, result.action))
+        self._tasks.pop((result.generation, result.action), None)
+        if result.generation == self.generation:
+            if result.action.startswith("key:"):
+                result.action = ":".join(result.action.split(":")[:2])
+            self.result.emit(result)
+
+    def invalidate(self):
+        self.generation += 1
+        self.serial = ""
+        # Queued tasks check their generation before executing.
 
     def connect_device(self, ip: str, port: int | str) -> bool:
         self.serial = device_serial(ip, port)
         return self.execute(["connect", self.serial], "connect", 15)
 
     def disconnect_device(self) -> bool:
-        args = ["disconnect", self.serial] if self.serial else ["disconnect"]
+        if not self.serial:
+            return False
+        args = ["disconnect", self.serial]
         return self.execute(args, "disconnect")
 
     def pair_device(self, ip: str, port: int | str, code: str) -> bool:
@@ -187,16 +243,23 @@ class AdbController(QObject):
         return self.execute(["mdns", "services"], action, 15)
 
     def target_args(self, command: list[str]) -> list[str]:
-        return (["-s", self.serial] if self.serial else []) + command
+        if not self.serial:
+            raise ValueError("Select and connect a TV first.")
+        return ["-s", self.serial] + command
 
     def key(self, name: str) -> bool:
-        return self.execute(self.target_args(["shell", "input", "keyevent", str(KEYCODES[name])]), f"key:{name}")
+        if not self.serial:
+            return False
+        self._command_id += 1
+        return self.execute(self.target_args(["shell", "input", "keyevent", str(KEYCODES[name])]), f"key:{name}:{self._command_id}")
 
     def send_text(self, text: str) -> bool:
+        if not self.serial:
+            return False
         return self.execute(self.target_args(["shell", "input", "text", escape_android_text(text)]), "text")
 
     def launch_package(self, package: str) -> bool:
-        if not re.fullmatch(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+", package.strip()):
+        if not self.serial or not valid_package(package):
             self.result.emit(AdbResult("launch", False, "Enter a valid Android package name."))
             return False
         return self.execute(
@@ -209,8 +272,42 @@ class AdbController(QObject):
         if apk.suffix.lower() != ".apk" or not apk.is_file():
             self.result.emit(AdbResult("install", False, "Choose a valid local .apk file first."))
             return False
+        if not self.serial:
+            return False
         return self.execute(
             self.target_args(["install", "-r", str(apk.resolve())]),
             f"install:{apk.name}",
             180,
         )
+
+
+def valid_package(package: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+", package))
+
+
+def parse_packages(output: str) -> list[str]:
+    return sorted({line[8:].strip() for line in output.splitlines()
+                   if line.startswith("package:") and valid_package(line[8:].strip())})
+
+
+def parse_getprop(output: str) -> dict:
+    props = dict(re.findall(r"^\[([^]\r\n]+)\]: \[([^]\r\n]*)\]$", output, re.M))
+    return {key: props.get(prop, "") for key, prop in {
+        "manufacturer": "ro.product.manufacturer", "model": "ro.product.model",
+        "android_version": "ro.build.version.release", "api_level": "ro.build.version.sdk"}.items()}
+
+
+def validate_apk(path: Path) -> None:
+    import zipfile
+    if not path.is_file() or path.suffix.lower() != ".apk" or path.stat().st_size > 2 * 1024**3:
+        raise ValueError("Choose a valid local .apk file (maximum 2 GB).")
+    try:
+        with zipfile.ZipFile(path) as archive:
+            if len(archive.infolist()) > 100000 or "AndroidManifest.xml" not in archive.namelist():
+                raise ValueError("APK has no Android manifest or has too many entries.")
+            manifest = archive.getinfo("AndroidManifest.xml")
+            if manifest.file_size > 4 * 1024**2 or manifest.flag_bits & 1:
+                raise ValueError("Invalid or encrypted APK manifest.")
+            archive.read(manifest)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise ValueError("Invalid APK archive.") from exc
