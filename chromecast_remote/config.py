@@ -8,6 +8,11 @@ from pathlib import Path
 
 APP_NAME = "ChromecastDesktopRemote"
 DEFAULTS = {
+    "schema_version": 2,
+    "profiles": [],
+    "selected_profile": "",
+    "setup_completed": False,
+    "show_setup_help": False,
     "device_ip": "",
     "adb_port": 5555,
     "adb_path": "",
@@ -36,19 +41,63 @@ def managed_adb_path() -> Path:
 
 
 def load_settings(path: Path | None = None) -> dict:
-    settings = deepcopy(DEFAULTS)
     target = path or config_path()
     try:
         saved = json.loads(target.read_text(encoding="utf-8"))
-        if isinstance(saved, dict):
-            for key, value in saved.items():
-                if key in settings:
-                    if key == "window" and isinstance(value, dict):
-                        settings[key].update(value)
-                    else:
-                        settings[key] = value
-    except (OSError, json.JSONDecodeError, TypeError):
-        pass
+    except (OSError, ValueError, TypeError):
+        saved = {}
+    return migrate_settings(saved)
+
+
+def new_profile(name: str, ip: str = "", port: int = 5555, auto_connect: bool = True) -> dict:
+    import uuid
+    return dict(id=uuid.uuid4().hex, name=name, ip=ip, port=port,
+                service_name="", model="", manufacturer="", android_version="",
+                api_level="", auto_connect=auto_connect, last_connected="", favorites=[])
+
+
+def migrate_settings(saved) -> dict:
+    settings = deepcopy(DEFAULTS)
+    if not isinstance(saved, dict):
+        return settings
+    for key, default in DEFAULTS.items():
+        value = saved.get(key, default)
+        if key == "window":
+            if isinstance(value, dict):
+                for field, fallback in default.items():
+                    candidate = value.get(field, fallback)
+                    if type(candidate) is int and (field in ("x", "y") or 100 <= candidate <= 10000):
+                        settings[key][field] = candidate
+                    elif candidate is None and field in ("x", "y"):
+                        settings[key][field] = None
+        elif isinstance(value, type(default)):
+            settings[key] = deepcopy(value)
+    if not 1 <= settings["adb_port"] <= 65535:
+        settings["adb_port"] = 5555
+    profiles = []
+    for value in settings["profiles"]:
+        if not isinstance(value, dict) or not isinstance(value.get("ip"), str):
+            continue
+        profile = new_profile("TV")
+        for key, default in profile.items():
+            candidate = value.get(key, default)
+            if isinstance(candidate, type(default)):
+                profile[key] = candidate
+        if not 1 <= profile["port"] <= 65535:
+            profile["port"] = 5555
+        if any(p["id"] == profile["id"] for p in profiles):
+            continue
+        profiles.append(profile)
+    if not profiles and settings["device_ip"]:
+        profiles.append(new_profile("My TV", settings["device_ip"], settings["adb_port"], settings["auto_connect"]))
+    settings["profiles"] = profiles
+    settings["schema_version"] = 2
+    if profiles:
+        chosen = next((p for p in profiles if p["id"] == settings["selected_profile"]), profiles[0])
+        settings["selected_profile"] = chosen["id"]
+        settings.update(device_ip=chosen["ip"], adb_port=chosen["port"], auto_connect=chosen["auto_connect"])
+    else:
+        settings["selected_profile"] = ""
     return settings
 
 
