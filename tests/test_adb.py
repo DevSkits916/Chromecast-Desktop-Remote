@@ -41,7 +41,7 @@ def test_required_android_keycodes():
         "up": 19, "down": 20, "left": 21, "right": 22, "ok": 23,
         "back": 4, "home": 3, "power": 26, "volume_up": 24,
         "volume_down": 25, "mute": 164, "play_pause": 85,
-        "rewind": 89, "fast_forward": 90,
+        "rewind": 89, "fast_forward": 90, "previous": 88, "next": 87, "stop": 86,
     }
 
 
@@ -68,7 +68,9 @@ def test_discovery_runs_mdns_services(monkeypatch):
 
 def test_install_apk_targets_saved_tv_and_uses_replace(tmp_path, monkeypatch):
     apk = tmp_path / "Example TV App.apk"
-    apk.write_bytes(b"mock apk")
+    import zipfile
+    with zipfile.ZipFile(apk, "w") as archive:
+        archive.writestr("AndroidManifest.xml", b"mock manifest")
     controller = AdbController()
     controller.serial = "192.168.1.20:37123"
     captured = {}

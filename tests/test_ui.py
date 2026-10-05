@@ -86,7 +86,7 @@ def test_keyboard_shortcuts(monkeypatch):
     app.processEvents()
     QTest.keyClick(window, Qt.Key.Key_Up)
     QTest.keyClick(window, Qt.Key.Key_Space)
-    assert sent == ["up"]
+    assert sent == ["up", "play_pause"]
     window.quitting = True
     window.close()
     app.processEvents()
