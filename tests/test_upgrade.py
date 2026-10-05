@@ -442,3 +442,23 @@ def test_invalid_apk_is_rejected_in_worker_without_subprocess(tmp_path,monkeypat
     assert calls==[]
     assert not results[0].ok
     assert 'Invalid APK' in results[0].output
+
+
+def test_launch_supports_tv_and_mobile_categories_without_random_events(monkeypatch):
+    controller=AdbController()
+    controller.serial='192.168.1.2:5555'
+    calls=[]
+    monkeypatch.setattr(controller,'execute',lambda *args:calls.append(args) or True)
+    assert controller.launch_package('com.example.tv')
+    args=calls[0][0]
+    assert args[:2]==['-s','192.168.1.2:5555']
+    assert 'android.intent.category.LEANBACK_LAUNCHER' in args
+    assert 'android.intent.category.LAUNCHER' in args
+    assert '--dbg-no-events' in args
+
+
+def test_monkey_aborted_is_not_reported_as_launched():
+    import sys
+    from chromecast_remote.adb import run_adb
+    result=run_adb(sys.executable,['-c',"print('No activities found to run, monkey aborted')"],'launch:com.example.tv')
+    assert not result.ok

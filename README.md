@@ -54,7 +54,7 @@ Focus the desired input on the TV, then use **Advanced → Text → Send Text**.
 
 ## Installed apps and favorites
 
-Connect and open **Advanced → Apps → Refresh**. The remote queries installed package names and system packages in the background, caches results per device for the current session, and supports search, Launch, Favorite and Info. Favorites are saved per profile and sorted first. Labels are package names, not translated application titles. Launch uses Android's launcher category; packages without a launcher may not open. There are no hardcoded Netflix/YouTube/Spotify dependencies.
+Connect and open **Advanced → Apps → Refresh**. The remote queries installed package names and system packages in the background, caches results per device for the current session, and supports search, Launch, Favorite and Info. Favorites are saved per profile and sorted first. Labels are package names, not translated application titles. Launch accepts Android TV's Leanback launcher category and the ordinary Android launcher category, with extra Monkey events disabled; packages without a launcher may not open. There are no hardcoded Netflix/YouTube/Spotify dependencies.
 
 **Info** displays package details in the Device / ADB tab. **Uninstall** requires an explicit confirmation that local app data may be erased. System packages and packages whose system classification has not been loaded cannot be removed through this interface. Device restrictions are respected. Refresh updates the list; a successful uninstall triggers refresh automatically.
 

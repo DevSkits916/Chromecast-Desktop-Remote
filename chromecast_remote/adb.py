@@ -128,7 +128,7 @@ def run_adb(adb_path: str, args: list[str], action: str, timeout: float = 12.0) 
         output = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part.strip())
         ok = completed.returncode == 0 and not any(
             phrase in output.lower()
-            for phrase in ("failed to", "cannot connect", "error:", "unauthorized", "offline", "failure [")
+            for phrase in ("failed to", "cannot connect", "error:", "unauthorized", "offline", "failure [", "no activities found", "monkey aborted")
         )
         return AdbResult(action, ok, output if ok else friendly_error(output), completed.returncode)
     except subprocess.TimeoutExpired:
@@ -263,7 +263,7 @@ class AdbController(QObject):
             self.result.emit(AdbResult("launch", False, "Enter a valid Android package name."))
             return False
         return self.execute(
-            self.target_args(["shell", "monkey", "-p", package.strip(), "-c", "android.intent.category.LAUNCHER", "1"]),
+            self.target_args(["shell", "monkey", "-p", package.strip(), "-c", "android.intent.category.LEANBACK_LAUNCHER", "-c", "android.intent.category.LAUNCHER", "--dbg-no-events", "1"]),
             f"launch:{package.strip()}",
         )
 
