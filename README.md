@@ -1,4 +1,5 @@
 # Chromecast Desktop Remote — v1.3.0
+https://github.com/DevSkits916/Chromecast-Desktop-Remote/releases/download/v1.3.0/ChromecastRemote-1.3.0.exe
 
 A local Windows remote for Chromecast with Google TV, Google TV Streamer, and compatible Android TV / Google TV devices that expose ADB. The normal screen stays focused on D-pad, OK, Back, Home, Power, Volume and Mute. Media, text, installed apps, APK installation and diagnostic information live behind **Advanced**.
 
