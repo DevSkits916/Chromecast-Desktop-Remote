@@ -13,6 +13,9 @@ from .ui import RemoteWindow
 
 
 def main() -> int:
+    if '--bluetooth-check' in sys.argv:
+        from .bluetooth import main as check_bluetooth
+        return check_bluetooth()
     QCoreApplication.setOrganizationName("LocalTools")
     QCoreApplication.setApplicationName("Chromecast Desktop Remote")
     QCoreApplication.setApplicationVersion(__version__)

@@ -1,11 +1,77 @@
-# Chromecast Desktop Remote — v1.3.0
-https://github.com/DevSkits916/Chromecast-Desktop-Remote/releases/download/v1.3.0/ChromecastRemote-1.3.0.exe
+# Chromecast Desktop Remote — v2.0.0
+
+[Download Windows EXE](https://github.com/DevSkits916/Chromecast-Desktop-Remote/releases/download/v2.0.0/ChromecastRemote-2.0.0.exe) · [Release notes and checksum](https://github.com/DevSkits916/Chromecast-Desktop-Remote/releases/tag/v2.0.0)
 
 A local Windows remote for Chromecast with Google TV, Google TV Streamer, and compatible Android TV / Google TV devices that expose ADB. The normal screen stays focused on D-pad, OK, Back, Home, Power, Volume and Mute. Media, text, installed apps, APK installation and diagnostic information live behind **Advanced**.
+
+**New in 2.0: Bluetooth is experimental but working on the Windows side.** Real BLE
+HID service creation, connectable advertising and clean shutdown were verified with
+both the source app and standalone EXE on a compatible Windows adapter. Input routing
+and press/release handling are covered by automated tests. Physical Chromecast pairing,
+navigation, firmware key mappings and first-time setup-screen acceptance remain
+unverified; Bluetooth compatibility is not guaranteed for every adapter or TV.
+Existing ADB navigation and advanced tools are preserved.
 
 Older cast-only Chromecast dongles are unsupported: they do not run Android TV or expose this ADB control channel. Wireless pairing availability varies by Android version and vendor. Consult [Google's ADB guide](https://developer.android.com/tools/adb) if your TV does not expose Wireless debugging.
 
 ## First-time setup
+
+### Experimental Bluetooth navigation (Windows)
+
+Version 2.0 includes a real BLE HID peripheral backend. It makes the PC behave
+as a keyboard/consumer-control device, using Windows WinRT APIs on a background thread.
+It does not require Wi-Fi, ADB, or a TV-side app. The adapter and driver must support BLE
+peripheral mode. This is not Bluetooth Classic HID emulation.
+
+1. Run the app. Open **Connection setup → Bluetooth setup**.
+2. Click **Start advertising**. The app checks the adapter and radio, creates encrypted
+   HID reports, and waits for Windows to confirm advertising has started.
+3. On an already configured TV, open **Settings → Remotes & Accessories → Pair accessory**
+   (wording varies). Look for the PC's Bluetooth name. Accept any Windows pairing prompt.
+4. When the TV subscribes, select its host ID and click **Use selected host**. The selected
+   host is remembered per TV profile. Input notifications target only that host.
+5. Click **Return to remote** and use the existing D-pad, OK, Back and media controls.
+   **Connection setup → Remote control connection** switches between Bluetooth and ADB.
+   ADB remains independent and is required for Advanced text, apps, APKs and diagnostics.
+6. **Stop Bluetooth** or **Disconnect** stops advertising and releases held keys. Closing
+   the app stops Bluetooth; closing to the tray releases keys but keeps advertising.
+   Selecting a different TV profile stops Bluetooth; start it again for that profile.
+
+Bluetooth buttons send real press/release reports; the host handles hold repetition.
+Arrows and Enter use keyboard HID usages; Back uses Escape. Home and media buttons use
+consumer usages and may map differently across TV firmware. Voice, IR TV control and
+remote wake are not implemented. Basic navigation on a Chromecast still needs physical
+verification. Saved Bluetooth mode opens setup at startup but does not silently advertise.
+
+For a factory-reset Chromecast, try starting advertising while the TV displays its
+pairing screen. **Acceptance of a generic BLE HID device at that screen is unverified.**
+Google documents holding **Back + Home on the physical remote**, not D-pad Left, to start
+its pairing mode. The Back icon is a left arrow. That gesture is handled by the physical
+remote's firmware; sending Left/Back reports cannot trigger bonding before a connection
+exists. This app advertises its own device and does not impersonate Google's remote.
+If the setup screen does not discover or accept it, use the physical/replacement remote
+to get through setup. There is no ADB bypass for a stock factory-reset TV.
+
+Run a short adapter/service/advertising check (it sends no remote input):
+
+```powershell
+cd "$HOME\Documents\Chromecast-Desktop-Remote"
+.\.venv\Scripts\python.exe -m chromecast_remote.bluetooth
+```
+
+The built EXE also accepts `--bluetooth-check`; it exits after about eight seconds and
+records its result in the Bluetooth log (exit code 0 means advertising succeeded).
+
+Bluetooth error logs are rotated in
+`%LOCALAPPDATA%\ChromecastDesktopRemote\logs\bluetooth.log`. Adapter support is checked
+live. If Windows rejects advertising or encryption/pairing, inspect those errors and
+the Windows Bluetooth settings. Windows owns pairing keys; this app never stores them.
+To retry a stale bond, forget the PC on the TV and the TV in Windows, then pair again.
+The app creates the HID and battery services; Windows controls GAP/device-information
+behavior, which can affect compatibility. A successful local advertising check does
+not prove Chromecast discovery, bonding, setup-screen acceptance or key mapping.
+
+### Network / ADB setup
 
 1. Run the EXE or use the source instructions below. Help opens until setup succeeds, when ADB is missing, or when no TV is configured. Reopen it with **Help** at any time. **Settings → General → Show setup help at startup** overrides this behavior.
 2. Open **Connection setup → Set up ADB**, read Google's SDK terms, accept them, and download official Windows Platform Tools. You can instead select your existing `adb.exe` in **Settings → ADB**.
@@ -79,7 +145,7 @@ The managed installer reads `source.properties` for its installed Platform Tools
 
 ## Application updates
 
-**Settings → Updates** or **Advanced → Device / ADB** can check the latest GitHub release for `DevSkits916/Chromecast-Desktop-Remote`. Stable semantic versions are compared with v1.3.0. Offline, malformed and unavailable responses fail gracefully. **View Release** opens the official release page. Checks run only when clicked; the remote does not automatically download or execute release binaries.
+**Settings → Updates** or **Advanced → Device / ADB** can check the latest GitHub release for `DevSkits916/Chromecast-Desktop-Remote`. Stable semantic versions are compared with v2.0.0. Offline, malformed and unavailable responses fail gracefully. **View Release** opens the official release page. Checks run only when clicked; the remote does not automatically download or execute release binaries.
 
 ## Settings, migration and privacy
 
@@ -91,7 +157,7 @@ Configuration lives at:
 
 Schema version 2 automatically migrates the old single-TV address, connection port and auto-connect preference into **My TV**. ADB selection, compact/top/startup/tray preferences and geometry are retained. Legacy address keys remain compatibility mirrors for the selected profile. Migration is idempotent. Settings are saved through temporary-file replacement. Malformed JSON or wrong types recover to safe defaults; unknown settings are ignored. Back up this file before downgrading, because older versions do not understand profiles.
 
-Settings categories are General, Devices, Remote, Keyboard, ADB and Updates. Favorites, service identity and recent connection time are stored locally. No telemetry, cloud account or pairing code is stored. Control commands stay on the LAN. Internet access occurs only for explicit Google downloads/version checks or GitHub release checks. No additional public network listener is introduced.
+Settings categories are General, Devices, Remote, Keyboard, ADB and Updates. Favorites, service identity, Bluetooth host identity and recent connection time are stored locally. No telemetry, cloud account or pairing code is stored. ADB commands stay on the LAN; Bluetooth HID input is sent only to the selected subscribed host. Internet access occurs only for explicit Google downloads/version checks or GitHub release checks. Bluetooth setup exposes a local BLE HID service until stopped. No public IP listener is introduced.
 
 ## Run from source
 
@@ -161,6 +227,9 @@ chromecast_remote/app.py       Qt application startup/metadata
 chromecast_remote/ui.py        Remote, dialogs, advanced panels, hold timers
 chromecast_remote/adb.py       Targeted async commands and safe parsers
 chromecast_remote/connection.py Connection state/backoff and profile matching
+chromecast_remote/bluetooth.py  Windows BLE HID server, background loop and diagnostics
+chromecast_remote/hid.py        Keyboard and consumer HID report encoding
+chromecast_remote/transport.py  Navigation routing; ADB management stays independent
 chromecast_remote/config.py    Schema migration, persistence and startup
 chromecast_remote/platform_tools.py Managed official ADB installation
 chromecast_remote/updates.py    Explicit GitHub/Google version checks

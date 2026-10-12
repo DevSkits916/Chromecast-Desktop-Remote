@@ -1,2 +1,9 @@
 PySide6-Essentials==6.11.2
 PyInstaller>=6.10,<7
+winrt-runtime==3.2.1; sys_platform == 'win32'
+winrt-Windows.Foundation==3.2.1; sys_platform == 'win32'
+winrt-Windows.Foundation.Collections==3.2.1; sys_platform == 'win32'
+winrt-Windows.Devices.Bluetooth==3.2.1; sys_platform == 'win32'
+winrt-Windows.Devices.Bluetooth.GenericAttributeProfile==3.2.1; sys_platform == 'win32'
+winrt-Windows.Storage.Streams==3.2.1; sys_platform == 'win32'
+winrt-Windows.Devices.Radios==3.2.1; sys_platform == 'win32'

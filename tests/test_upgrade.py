@@ -148,7 +148,7 @@ def test_update_failure_is_graceful(monkeypatch):
     assert updates.check_platform_update()[0] is False
 
 
-@pytest.mark.parametrize('tag, message', [('v1.3.1','Update available'),('v1.3.0','current'),('bad','Could not check')])
+@pytest.mark.parametrize('tag, message', [('v2.0.1','Update available'),('v2.0.0','current'),('bad','Could not check')])
 def test_update_versions(monkeypatch, tag, message):
     monkeypatch.setattr(updates, 'read_url', lambda url: json.dumps({'tag_name':tag}).encode())
     assert message in updates.check_update()[1]

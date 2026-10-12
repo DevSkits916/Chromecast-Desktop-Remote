@@ -39,6 +39,8 @@ from .adb import AdbController, AdbResult, KEYCODES, parse_mdns_services, parse_
 from .config import migrate_settings, new_profile, managed_adb_path, DEFAULTS, find_adb, save_settings, set_launch_with_windows
 from .platform_tools import PlatformToolsTask, SDK_TERMS_URL, installed_platform_version
 from .connection import ConnectionSession, ConnectionState, match_discovered
+from .bluetooth import BluetoothController
+from .transport import RemoteTransport
 from .updates import UpdateTask, RELEASE_URL
 from . import __version__
 
@@ -407,6 +409,11 @@ class RemoteWindow(QMainWindow):
         self.apps_cache = {}
         self._update_tasks = []
         self.controller = AdbController(find_adb(settings.get("adb_path", "")))
+        self.bluetooth = BluetoothController(self)
+        self.transport = RemoteTransport(self.controller, self.bluetooth)
+        self.transport.mode = settings.get('control_transport', 'adb')
+        self.bluetooth.status.connect(self._bluetooth_status)
+        self.bluetooth.clients_changed.connect(self._bluetooth_clients)
         if self.controller.adb_path and not settings.get("adb_path"):
             self.settings["adb_path"] = self.controller.adb_path
         self.connected = False
@@ -438,7 +445,7 @@ class RemoteWindow(QMainWindow):
         QTimer.singleShot(700, self._startup_discovery)
 
     def _startup_discovery(self) -> None:
-        if self.quitting or not self.controller.available:
+        if self.quitting or self.transport.mode == 'bluetooth' or not self.controller.available:
             return
         if self.settings.get("auto_connect"):
             self.connect_with_discovery()
@@ -497,6 +504,19 @@ class RemoteWindow(QMainWindow):
         self._refresh_profiles()
         connection_layout = QVBoxLayout()
         connection_layout.setContentsMargins(14, 14, 14, 14)
+        self.transport_selector = QComboBox()
+        self.transport_selector.setAccessibleName('Remote control connection')
+        self.transport_selector.addItem('Network / ADB', 'adb')
+        self.transport_selector.addItem('Bluetooth HID (experimental)', 'bluetooth')
+        self.transport_selector.setCurrentIndex(1 if self.transport.mode == 'bluetooth' else 0)
+        self.transport_selector.currentIndexChanged.connect(self._select_transport)
+        connection_layout.addWidget(self.transport_selector)
+        self.bluetooth_button = button('Bluetooth setup')
+        self.bluetooth_button.clicked.connect(self.open_bluetooth)
+        connection_layout.addWidget(self.bluetooth_button)
+        self.bluetooth_notice = QLabel('Bluetooth stopped. Open Bluetooth setup to pair.')
+        self.bluetooth_notice.setWordWrap(True)
+        connection_layout.addWidget(self.bluetooth_notice)
         connect_row = QHBoxLayout()
         self.ip_edit = QLineEdit(str(self.settings.get("device_ip", "")))
         self.ip_edit.setPlaceholderText("TV IP address")
@@ -541,7 +561,7 @@ class RemoteWindow(QMainWindow):
         power_row = QHBoxLayout()
         power_row.addStretch()
         power = button("⏻", "Power", "round")
-        power.clicked.connect(lambda: self.send_key("power"))
+        self._bind_control(power, 'power')
         power_row.addWidget(power)
         power_row.addStretch()
         root.addLayout(power_row)
@@ -564,9 +584,9 @@ class RemoteWindow(QMainWindow):
 
         back_home = QHBoxLayout()
         back = button("↩  Back")
-        back.clicked.connect(lambda: self.send_key("back"))
+        self._bind_control(back, 'back')
         home = button("⌂  Home")
-        home.clicked.connect(lambda: self.send_key("home"))
+        self._bind_control(home, 'home')
         back_home.addWidget(back)
         back_home.addWidget(home)
         root.addLayout(back_home)
@@ -684,6 +704,10 @@ class RemoteWindow(QMainWindow):
             self.message.setText(str(exc))
 
     def connect_with_discovery(self) -> None:
+        if self.transport.mode == 'bluetooth':
+            self.open_bluetooth()
+            self._bluetooth_dialog.start()
+            return
         self.session.start()
         self._set_state(ConnectionState.SEARCHING)
         self.reconnect_timer.stop()
@@ -757,6 +781,11 @@ class RemoteWindow(QMainWindow):
             self.message.setText(f"Detected {selected.ip}:{selected.port}. Ready to connect.")
 
     def disconnect_device(self) -> None:
+        if self.transport.mode == 'bluetooth':
+            self.bluetooth.stop()
+            self.transport.bluetooth_connected = False
+            self._bluetooth_status('STOPPED', 'Bluetooth input stopped.')
+            return
         self.session.disconnect()
         self.reconnect_timer.stop()
         serial = self.controller.serial
@@ -769,8 +798,38 @@ class RemoteWindow(QMainWindow):
         self.controller.serial = ""
 
     def send_key(self, name: str) -> None:
-        if self.connected:
-            self.controller.key(name)
+        if not self.transport.tap(name, self.connected):
+            self.message.setText('Connect the selected control transport first.')
+
+    def _select_transport(self):
+        for control in self.findChildren(QPushButton):
+            if hasattr(control, '_repeat'):
+                control._repeat.stop()
+        self.transport.select(self.transport_selector.currentData())
+        self.settings['control_transport'] = self.transport.mode
+        save_settings(self.settings)
+        self._set_state(self.session.state)
+        self.message.setText('Bluetooth navigation selected; advanced tools still require ADB.'
+                             if self.transport.mode == 'bluetooth' else 'Network / ADB navigation selected.')
+
+    def _bluetooth_status(self, state, message):
+        self.transport.bluetooth_connected = state == 'CONNECTED'
+        self._bluetooth_state = state
+        self.bluetooth_notice.setText(f'{state.title()}: {message}')
+        if self.transport.mode == 'bluetooth':
+            self.status_label.setText(f'Bluetooth: {state.title()}')
+        if hasattr(self, '_bluetooth_dialog') and self._bluetooth_dialog:
+            self._bluetooth_dialog.status.setText(self.bluetooth_notice.text())
+
+    def _bluetooth_clients(self, clients):
+        if hasattr(self, '_bluetooth_dialog') and self._bluetooth_dialog:
+            self._bluetooth_dialog.update_clients(clients)
+
+    def open_bluetooth(self):
+        if not getattr(self, '_bluetooth_dialog', None):
+            self._bluetooth_dialog = BluetoothDialog(self)
+        self._bluetooth_dialog.show()
+        self._bluetooth_dialog.raise_()
 
     def select_apk(self) -> None:
         chosen, _ = QFileDialog.getOpenFileName(self, "Choose Android APK", "", "Android app package (*.apk)")
@@ -917,11 +976,17 @@ class RemoteWindow(QMainWindow):
         self._setup_dialog.show()
 
     def apply_settings(self, settings: dict) -> None:
+        self.bluetooth.stop()
+        self.transport.bluetooth_connected = False
         self.controller.invalidate()
         self.connected = False
         self.session.disconnect()
         self.reconnect_timer.stop()
         self.settings = settings = migrate_settings(settings)
+        self.transport.select(settings['control_transport'])
+        self.transport_selector.blockSignals(True)
+        self.transport_selector.setCurrentIndex(1 if self.transport.mode == 'bluetooth' else 0)
+        self.transport_selector.blockSignals(False)
         self._refresh_profiles()
         self.ip_edit.setText(str(settings.get("device_ip", "")))
         self.port_edit.setValue(int(settings.get("adb_port", 5555)))
@@ -935,7 +1000,10 @@ class RemoteWindow(QMainWindow):
         save_settings(self.settings)
 
     def eventFilter(self, watched, event: QEvent) -> bool:
-        if event.type() == QEvent.Type.KeyPress and self.isActiveWindow():
+        if event.type() in (QEvent.Type.WindowDeactivate, QEvent.Type.ApplicationDeactivate, QEvent.Type.Hide):
+            if watched is self or watched is QApplication.instance():
+                self.bluetooth.release_all()
+        if event.type() in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease) and self.isActiveWindow():
             focus = QApplication.focusWidget()
             if isinstance(focus, (QLineEdit, QSpinBox, QTextEdit, QPlainTextEdit, QComboBox)) or QApplication.activeModalWidget():
                 return super().eventFilter(watched, event)
@@ -949,7 +1017,13 @@ class RemoteWindow(QMainWindow):
                 Qt.Key.Key_H: "home", Qt.Key.Key_PageUp: "volume_up", Qt.Key.Key_PageDown: "volume_down",
             }
             if key in mapping and not event.isAutoRepeat():
-                self.send_key(mapping[key])
+                if self.transport.mode == 'bluetooth':
+                    if event.type() == QEvent.Type.KeyPress:
+                        self.transport.press(mapping[key])
+                    else:
+                        self.transport.release(mapping[key])
+                elif event.type() == QEvent.Type.KeyPress:
+                    self.send_key(mapping[key])
                 return True
         return super().eventFilter(watched, event)
 
@@ -963,6 +1037,7 @@ class RemoteWindow(QMainWindow):
         self.activateWindow()
 
     def quit_app(self) -> None:
+        self.bluetooth.stop()
         self.quitting = True
         self._save_geometry()
         self.session.disconnect()
@@ -979,6 +1054,7 @@ class RemoteWindow(QMainWindow):
         save_settings(self.settings)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self.bluetooth.release_all()
         self._save_geometry()
         if self.settings.get("close_to_tray") and self.tray and not self.quitting:
             event.ignore()
@@ -986,6 +1062,7 @@ class RemoteWindow(QMainWindow):
             self.tray.showMessage("Chromecast Desktop Remote", "The remote is still running in the system tray.", QSystemTrayIcon.MessageIcon.Information, 2500)
             return
         self.quitting = True
+        self.bluetooth.stop()
         self.controller.invalidate()
         self.heartbeat.stop()
         self.reconnect_timer.stop()
@@ -1031,6 +1108,8 @@ class RemoteWindow(QMainWindow):
     def _select_profile(self, index):
         if index < 0:
             return
+        self.bluetooth.stop()
+        self.transport.bluetooth_connected = False
         if hasattr(self, 'ip_edit'):
             self._save_profile()
         old_serial = self.controller.serial
@@ -1090,11 +1169,17 @@ class RemoteWindow(QMainWindow):
         save_settings(self.settings)
 
     def _startup_help(self):
+        if self.transport.mode == 'bluetooth':
+            self.open_bluetooth()
+            return
         if self.settings['show_setup_help'] or not self.settings['setup_completed'] or not self.controller.available or not self.settings['profiles']:
             self.open_help()
 
     def _set_state(self, state):
         self.session.state = state
+        if self.transport.mode == 'bluetooth':
+            self.status_label.setText(f"Bluetooth: {getattr(self, '_bluetooth_state', 'Stopped').title()}")
+            return
         profile = self._profile()
         name = profile['name'] if profile else 'TV'
         labels = {
@@ -1130,10 +1215,13 @@ class RemoteWindow(QMainWindow):
 
     def _bind_control(self, control, name):
         control.setAccessibleName(name.replace('_', ' ').title())
+        control.installEventFilter(InputReleaseGuard(control, lambda: self.transport.release(name)))
+        control.pressed.connect(lambda: self.transport.press(name))
+        control.released.connect(lambda: self.transport.release(name))
         if name not in ('up', 'down', 'left', 'right', 'volume_up', 'volume_down', 'rewind', 'fast_forward'):
-            control.clicked.connect(lambda checked=False: self.send_key(name))
+            control.clicked.connect(lambda checked=False: self.send_key(name) if self.transport.mode == 'adb' else None)
             return
-        repeat = HoldRepeat(control, lambda: self.send_key(name))
+        repeat = HoldRepeat(control, lambda: self.send_key(name) if self.transport.mode == 'adb' else None)
         control.pressed.connect(repeat.start)
         control.released.connect(repeat.stop)
         control._repeat = repeat
@@ -1300,6 +1388,83 @@ class RemoteWindow(QMainWindow):
             event.acceptProposedAction()
 
 
+class BluetoothDialog(QDialog):
+    def __init__(self, remote):
+        super().__init__(remote)
+        self.remote = remote
+        self.setWindowTitle('Bluetooth remote setup — experimental')
+        self.resize(510, 430)
+        root = QVBoxLayout(self)
+        note = QLabel(
+            'Your PC acts as a Bluetooth keyboard/remote. Start advertising, then pair it '
+            'from the TV. Windows uses the PC’s Bluetooth name; accept Windows pairing prompts. '
+            'Choose the subscribed TV host below to enable input.\n\n'
+            'First-time setup: Google documents holding Back + Home on the physical remote '
+            'to start pairing. A left-arrow Back icon is not D-pad Left. This app advertises '
+            'its own HID device; it cannot reproduce the physical remote’s pairing gesture. '
+            'The factory-reset pairing screen may not accept a generic HID device.\n\n'
+            'No Wi-Fi or ADB is needed for Bluetooth navigation. Voice, infrared TV control '
+            'and wake support are unavailable. Home/media mappings depend on the TV firmware.')
+        note.setWordWrap(True)
+        root.addWidget(note)
+        self.status = QLabel(remote.bluetooth_notice.text())
+        self.status.setWordWrap(True)
+        self.status.setTextFormat(Qt.TextFormat.PlainText)
+        root.addWidget(self.status)
+        self.host = QComboBox()
+        self.host.setAccessibleName('Subscribed Bluetooth host')
+        root.addWidget(self.host)
+        actions = QHBoxLayout()
+        for label, callback in (('Start advertising', self.start), ('Use selected host', self.use_host),
+                                ('Stop Bluetooth', self.stop)):
+            control = button(label)
+            control.clicked.connect(callback)
+            actions.addWidget(control)
+        root.addLayout(actions)
+        close = button('Return to remote')
+        close.clicked.connect(self.close)
+        root.addWidget(close)
+
+    def start(self):
+        profile = self.remote._profile()
+        if not profile:
+            profile = new_profile('Bluetooth TV', auto_connect=False)
+            self.remote.settings['profiles'].append(profile)
+            self.remote.settings['selected_profile'] = profile['id']
+            self.remote._refresh_profiles()
+            save_settings(self.remote.settings)
+        self.remote.transport_selector.setCurrentIndex(1)
+        self.remote.bluetooth.start(profile.get('bluetooth_peer', ''))
+
+    def update_clients(self, clients):
+        chosen = self.host.currentData()
+        self.host.clear()
+        for client in clients:
+            self.host.addItem(client, client)
+        index = self.host.findData(chosen)
+        if index >= 0:
+            self.host.setCurrentIndex(index)
+
+    def use_host(self):
+        peer = self.host.currentData()
+        if not peer:
+            self.status.setText('No host subscribed yet. Pair from the TV first.')
+            return
+        if not self.remote.bluetooth.select_peer(peer):
+            self.status.setText('Start Bluetooth advertising first.')
+            return
+        profile = self.remote._profile()
+        if profile:
+            profile['bluetooth_peer'] = peer
+            save_settings(self.remote.settings)
+        self.remote.transport_selector.setCurrentIndex(1)
+
+    def stop(self):
+        stopped = self.remote.bluetooth.stop()
+        self.remote._bluetooth_status('STOPPED' if stopped else 'STOPPING',
+                                      'Bluetooth input stopped.' if stopped else 'Waiting for Windows cleanup.')
+
+
 class HoldRepeat:
     """One immediate action, 350 ms delay, then 110 ms repeats."""
     def __init__(self, parent, callback):
@@ -1340,4 +1505,15 @@ class RepeatGuard(QObject):
     def eventFilter(self, watched, event):
         if event.type() in (QEvent.Type.Hide, QEvent.Type.WindowDeactivate, QEvent.Type.EnabledChange):
             self.repeat.stop()
+        return False
+
+
+class InputReleaseGuard(QObject):
+    def __init__(self, parent, release):
+        super().__init__(parent)
+        self.release = release
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.Hide, QEvent.Type.WindowDeactivate, QEvent.Type.EnabledChange):
+            self.release()
         return False

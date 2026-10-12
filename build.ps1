@@ -58,6 +58,8 @@ try {
         --icon $IconPath `
         --version-file $VersionInfo `
         --add-data $AssetData `
+        --collect-all winrt `
+        --runtime-hook packaging/runtime.py `
         --exclude-module PySide6.QtNetwork `
         --exclude-module PySide6.QtNetworkAuth `
         --distpath release `

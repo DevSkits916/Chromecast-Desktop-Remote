@@ -19,6 +19,7 @@ DEFAULTS = {
     "adb_terms_accepted": False,
     "auto_connect": True,
     "auto_detect_port": True,
+    "control_transport": "adb",
     "always_on_top": False,
     "compact_default": False,
     "close_to_tray": True,
@@ -53,7 +54,7 @@ def new_profile(name: str, ip: str = "", port: int = 5555, auto_connect: bool = 
     import uuid
     return dict(id=uuid.uuid4().hex, name=name, ip=ip, port=port,
                 service_name="", model="", manufacturer="", android_version="",
-                api_level="", auto_connect=auto_connect, last_connected="", favorites=[])
+                api_level="", auto_connect=auto_connect, last_connected="", favorites=[], bluetooth_peer="")
 
 
 def migrate_settings(saved) -> dict:
@@ -74,6 +75,8 @@ def migrate_settings(saved) -> dict:
             settings[key] = deepcopy(value)
     if not 1 <= settings["adb_port"] <= 65535:
         settings["adb_port"] = 5555
+    if settings['control_transport'] not in ('adb', 'bluetooth'):
+        settings['control_transport'] = 'adb'
     profiles = []
     for value in settings["profiles"]:
         if not isinstance(value, dict) or not isinstance(value.get("ip"), str):
